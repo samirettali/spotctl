@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -36,8 +36,12 @@ func run(args []string) error {
 		return runAuth(args[1:])
 	case "search":
 		return runSearch(args[1:])
+	case "device":
+		return runDevice(args[1:])
 	case "queue":
 		return runQueue(args[1:])
+	case "play":
+		return runPlay(args[1:])
 	case "playlist":
 		return runPlaylist(args[1:])
 	case "version", "--version", "-v":
@@ -58,8 +62,10 @@ Usage:
   spotctl auth status
   spotctl auth logout
   spotctl search [--type track|album|artist|playlist] [--limit N] QUERY
+  spotctl device list
   spotctl queue get
   spotctl queue add [--device ID] ITEM
+  spotctl play TYPE [--device ID] ITEM
   spotctl playlist list [--limit N]
   spotctl playlist get PLAYLIST
   spotctl playlist create --name NAME [--description TEXT] [--public]

@@ -37,6 +37,15 @@ spotctl search "teardrop massive attack"
 spotctl search --type album --limit 5 "mezzanine"
 ```
 
+Start playback on the active device or a specific Spotify Connect device:
+
+```sh
+spotctl device list
+spotctl play album spotify:album:7kr9rQrjG28viFlKwH2QGq
+spotctl play track --device DEVICE_ID spotify:track:0F7FA14euOIX8KcbEturGH
+spotctl play playlist PLAYLIST_ID
+```
+
 Inspect or append to the playback queue:
 
 ```sh

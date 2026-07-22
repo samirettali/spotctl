@@ -1,6 +1,6 @@
 # AGENTS.md
 
-`spotctl` is an agent-friendly Spotify CLI written in Go.
+`spotctl` is an agent-friendly Spotify search, playback, queue, and playlist CLI written in Go.
 
 ## Commands
 

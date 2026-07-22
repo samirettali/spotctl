@@ -45,6 +45,61 @@ func runSearch(args []string) error {
 	return writeJSON(result)
 }
 
+func runDevice(args []string) error {
+	if len(args) != 1 || args[0] != "list" {
+		return errors.New("usage: spotctl device list")
+	}
+	client, err := newSpotifyClient()
+	if err != nil {
+		return err
+	}
+	return outputRequest(client, http.MethodGet, "/me/player/devices", nil, nil)
+}
+
+func runPlay(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: spotctl play track|episode|album|artist|playlist [--device ID] ITEM")
+	}
+
+	itemType := args[0]
+	validTypes := map[string]bool{
+		"track": true, "episode": true, "album": true, "artist": true, "playlist": true,
+	}
+	if !validTypes[itemType] {
+		return fmt.Errorf("unsupported playback type %q", itemType)
+	}
+
+	flags := flag.NewFlagSet("play", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	device := flags.String("device", "", "Spotify Connect device ID")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return errors.New("usage: spotctl play TYPE [--device ID] ITEM")
+	}
+
+	uri, err := spotifyURI(flags.Arg(0), itemType)
+	if err != nil {
+		return err
+	}
+	query := url.Values{}
+	if *device != "" {
+		query.Set("device_id", *device)
+	}
+
+	body := map[string]any{"context_uri": uri}
+	if itemType == "track" || itemType == "episode" {
+		body = map[string]any{"uris": []string{uri}}
+	}
+
+	client, err := newSpotifyClient()
+	if err != nil {
+		return err
+	}
+	return outputRequest(client, http.MethodPut, "/me/player/play", query, body)
+}
+
 func runQueue(args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: spotctl queue get|add")
