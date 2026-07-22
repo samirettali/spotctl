@@ -82,6 +82,29 @@ func TestRecentHistoryValidation(t *testing.T) {
 	}
 }
 
+func TestPlaylistPaginationValidation(t *testing.T) {
+	if err := playlistList(nil, []string{"--offset", "-1"}); err == nil {
+		t.Fatal("playlistList accepted a negative offset")
+	}
+
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "missing playlist", args: nil},
+		{name: "limit too low", args: []string{"playlist", "--limit", "0"}},
+		{name: "limit too high", args: []string{"playlist", "--limit", "101"}},
+		{name: "negative offset", args: []string{"playlist", "--offset", "-1"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := playlistGetItems(nil, test.args); err == nil {
+				t.Fatalf("playlistGetItems(%q) did not return an error", test.args)
+			}
+		})
+	}
+}
+
 func TestOptionalBool(t *testing.T) {
 	var value optionalBool
 	if value.set {

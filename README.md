@@ -74,7 +74,9 @@ Manage playlists:
 
 ```sh
 spotctl playlist list
+spotctl playlist list --limit 50 --offset 50
 spotctl playlist get PLAYLIST_ID
+spotctl playlist items PLAYLIST_ID --limit 100 --offset 0
 spotctl playlist create --name "Late night" --description "Created by my agent"
 spotctl playlist update PLAYLIST_ID --name "Later night" --public=true
 spotctl playlist add PLAYLIST_ID TRACK_ID spotify:track:TRACK_ID

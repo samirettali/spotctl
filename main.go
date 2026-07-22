@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-const version = "0.3.0"
+const version = "0.4.0"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -72,8 +72,9 @@ Usage:
   spotctl queue get
   spotctl queue add [--device ID] ITEM
   spotctl play TYPE [--device ID] ITEM
-  spotctl playlist list [--limit N]
+  spotctl playlist list [--limit N] [--offset N]
   spotctl playlist get PLAYLIST
+  spotctl playlist items PLAYLIST [--limit N] [--offset N]
   spotctl playlist create --name NAME [--description TEXT] [--public]
   spotctl playlist update PLAYLIST [--name NAME] [--description TEXT] [--public BOOL] [--collaborative BOOL]
   spotctl playlist add PLAYLIST ITEM...

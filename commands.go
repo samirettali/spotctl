@@ -233,7 +233,7 @@ func runQueue(args []string) error {
 
 func runPlaylist(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: spotctl playlist list|get|create|update|add|remove|delete")
+		return errors.New("usage: spotctl playlist list|get|items|create|update|add|remove|delete")
 	}
 	client, err := newSpotifyClient()
 	if err != nil {
@@ -248,6 +248,8 @@ func runPlaylist(args []string) error {
 			return errors.New("usage: spotctl playlist get PLAYLIST")
 		}
 		return outputRequest(client, http.MethodGet, "/playlists/"+spotifyID(args[1], "playlist"), nil, nil)
+	case "items":
+		return playlistGetItems(client, args[1:])
 	case "create":
 		return playlistCreate(client, args[1:])
 	case "update":
@@ -270,13 +272,38 @@ func playlistList(client *spotifyClient, args []string) error {
 	flags := flag.NewFlagSet("playlist list", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	limit := flags.Int("limit", 50, "number of playlists (1-50)")
+	offset := flags.Int("offset", 0, "result offset (0 or greater)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if flags.NArg() != 0 || *limit < 1 || *limit > 50 {
-		return errors.New("usage: spotctl playlist list [--limit N], where N is 1-50")
+	if flags.NArg() != 0 || *limit < 1 || *limit > 50 || *offset < 0 {
+		return errors.New("usage: spotctl playlist list [--limit N] [--offset N], where N is 1-50 and offset is non-negative")
 	}
-	return outputRequest(client, http.MethodGet, "/me/playlists", url.Values{"limit": {strconv.Itoa(*limit)}}, nil)
+	return outputRequest(client, http.MethodGet, "/me/playlists", url.Values{
+		"limit":  {strconv.Itoa(*limit)},
+		"offset": {strconv.Itoa(*offset)},
+	}, nil)
+}
+
+func playlistGetItems(client *spotifyClient, args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: spotctl playlist items PLAYLIST [--limit N] [--offset N]")
+	}
+	playlistID := spotifyID(args[0], "playlist")
+	flags := flag.NewFlagSet("playlist items", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	limit := flags.Int("limit", 100, "number of items (1-100)")
+	offset := flags.Int("offset", 0, "result offset (0 or greater)")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || *limit < 1 || *limit > 100 || *offset < 0 {
+		return errors.New("usage: spotctl playlist items PLAYLIST [--limit N] [--offset N], where N is 1-100 and offset is non-negative")
+	}
+	return outputRequest(client, http.MethodGet, "/playlists/"+playlistID+"/items", url.Values{
+		"limit":  {strconv.Itoa(*limit)},
+		"offset": {strconv.Itoa(*offset)},
+	}, nil)
 }
 
 func playlistCreate(client *spotifyClient, args []string) error {
