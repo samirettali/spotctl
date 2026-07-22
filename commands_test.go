@@ -37,6 +37,51 @@ func TestSpotifyURI(t *testing.T) {
 	}
 }
 
+func TestTopValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "missing type", args: nil},
+		{name: "invalid type", args: []string{"albums"}},
+		{name: "invalid time range", args: []string{"tracks", "--time-range", "weekly"}},
+		{name: "limit too low", args: []string{"artists", "--limit", "0"}},
+		{name: "limit too high", args: []string{"artists", "--limit", "51"}},
+		{name: "negative offset", args: []string{"tracks", "--offset", "-1"}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := runTop(test.args); err == nil {
+				t.Fatalf("runTop(%q) did not return an error", test.args)
+			}
+		})
+	}
+}
+
+func TestRecentHistoryValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "missing subcommand", args: nil},
+		{name: "invalid subcommand", args: []string{"all"}},
+		{name: "limit too low", args: []string{"recent", "--limit", "0"}},
+		{name: "limit too high", args: []string{"recent", "--limit", "51"}},
+		{name: "negative before", args: []string{"recent", "--before", "-1"}},
+		{name: "negative after", args: []string{"recent", "--after", "-1"}},
+		{name: "both cursors", args: []string{"recent", "--before", "1", "--after", "2"}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := runHistory(test.args); err == nil {
+				t.Fatalf("runHistory(%q) did not return an error", test.args)
+			}
+		})
+	}
+}
+
 func TestOptionalBool(t *testing.T) {
 	var value optionalBool
 	if value.set {

@@ -45,6 +45,90 @@ func runSearch(args []string) error {
 	return writeJSON(result)
 }
 
+func runTop(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: spotctl top tracks|artists [--time-range RANGE] [--limit N] [--offset N]")
+	}
+
+	itemType := args[0]
+	if itemType != "tracks" && itemType != "artists" {
+		return fmt.Errorf("unsupported top item type %q", itemType)
+	}
+
+	flags := flag.NewFlagSet("top "+itemType, flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	timeRange := flags.String("time-range", "medium_term", "short_term, medium_term, or long_term")
+	limit := flags.Int("limit", 20, "number of items (1-50)")
+	offset := flags.Int("offset", 0, "result offset (0 or greater)")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("unexpected positional arguments")
+	}
+	validTimeRanges := map[string]bool{"short_term": true, "medium_term": true, "long_term": true}
+	if !validTimeRanges[*timeRange] {
+		return fmt.Errorf("unsupported time range %q", *timeRange)
+	}
+	if *limit < 1 || *limit > 50 {
+		return errors.New("top items limit must be between 1 and 50")
+	}
+	if *offset < 0 {
+		return errors.New("top items offset must be 0 or greater")
+	}
+
+	client, err := newSpotifyClient()
+	if err != nil {
+		return err
+	}
+	return outputRequest(client, http.MethodGet, "/me/top/"+itemType, url.Values{
+		"time_range": {*timeRange},
+		"limit":      {strconv.Itoa(*limit)},
+		"offset":     {strconv.Itoa(*offset)},
+	}, nil)
+}
+
+func runHistory(args []string) error {
+	if len(args) == 0 || args[0] != "recent" {
+		return errors.New("usage: spotctl history recent [--limit N] [--before UNIX_MS | --after UNIX_MS]")
+	}
+
+	flags := flag.NewFlagSet("history recent", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	limit := flags.Int("limit", 20, "number of tracks (1-50)")
+	before := flags.Int64("before", 0, "return tracks played before this Unix timestamp in milliseconds")
+	after := flags.Int64("after", 0, "return tracks played after this Unix timestamp in milliseconds")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("unexpected positional arguments")
+	}
+	if *limit < 1 || *limit > 50 {
+		return errors.New("recent history limit must be between 1 and 50")
+	}
+	if *before < 0 || *after < 0 {
+		return errors.New("history timestamps must be 0 or greater")
+	}
+	if *before != 0 && *after != 0 {
+		return errors.New("--before and --after cannot be used together")
+	}
+
+	query := url.Values{"limit": {strconv.Itoa(*limit)}}
+	if *before != 0 {
+		query.Set("before", strconv.FormatInt(*before, 10))
+	}
+	if *after != 0 {
+		query.Set("after", strconv.FormatInt(*after, 10))
+	}
+
+	client, err := newSpotifyClient()
+	if err != nil {
+		return err
+	}
+	return outputRequest(client, http.MethodGet, "/me/player/recently-played", query, nil)
+}
+
 func runDevice(args []string) error {
 	if len(args) != 1 || args[0] != "list" {
 		return errors.New("usage: spotctl device list")

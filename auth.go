@@ -33,6 +33,8 @@ var oauthScopes = []string{
 	"playlist-modify-public",
 	"user-read-playback-state",
 	"user-modify-playback-state",
+	"user-top-read",
+	"user-read-recently-played",
 }
 
 type credentials struct {

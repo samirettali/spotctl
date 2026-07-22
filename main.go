@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -36,6 +36,10 @@ func run(args []string) error {
 		return runAuth(args[1:])
 	case "search":
 		return runSearch(args[1:])
+	case "top":
+		return runTop(args[1:])
+	case "history":
+		return runHistory(args[1:])
 	case "device":
 		return runDevice(args[1:])
 	case "queue":
@@ -62,6 +66,8 @@ Usage:
   spotctl auth status
   spotctl auth logout
   spotctl search [--type track|album|artist|playlist] [--limit N] QUERY
+  spotctl top tracks|artists [--time-range short_term|medium_term|long_term] [--limit N] [--offset N]
+  spotctl history recent [--limit N] [--before UNIX_MS | --after UNIX_MS]
   spotctl device list
   spotctl queue get
   spotctl queue add [--device ID] ITEM

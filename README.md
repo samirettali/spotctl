@@ -37,6 +37,22 @@ spotctl search "teardrop massive attack"
 spotctl search --type album --limit 5 "mezzanine"
 ```
 
+Inspect your top tracks or artists over Spotify's short-term (approximately 4 weeks), medium-term (approximately 6 months), or long-term (several years) windows:
+
+```sh
+spotctl top tracks --time-range short_term --limit 50
+spotctl top artists --time-range long_term
+```
+
+Inspect recently played tracks and paginate with the millisecond timestamps returned under `cursors`:
+
+```sh
+spotctl history recent --limit 50
+spotctl history recent --before 1735689600000
+```
+
+These commands require `user-top-read` and `user-read-recently-played`. Existing users must run `spotctl auth login` again to grant the new scopes.
+
 Start playback on the active device or a specific Spotify Connect device:
 
 ```sh
@@ -67,6 +83,10 @@ spotctl playlist delete PLAYLIST_ID
 ```
 
 Playlist deletion means unfollowing the playlist, matching Spotify's API semantics.
+
+## Extended streaming history
+
+Spotify does not expose extended or lifetime streaming history through its Web API. Request the Extended Streaming History archive manually from Spotify's account privacy page, then download it using the link Spotify sends by email.
 
 ## Queue limitation
 
