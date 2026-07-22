@@ -84,6 +84,15 @@ spotctl playlist remove PLAYLIST_ID TRACK_ID
 spotctl playlist delete PLAYLIST_ID
 ```
 
+Cache every owned or followed playlist and all of its tracks in SQLite, then perform an offline membership check using bare IDs, Spotify URIs, or Spotify URLs:
+
+```sh
+spotctl playlist cache
+spotctl playlist contains PLAYLIST_ID TRACK_ID
+```
+
+The default database is `$XDG_CACHE_HOME/spotctl/playlists.db` (or the platform user cache directory). Pass `--db PATH` to either command to use another database. Refreshes replace the cache atomically, and `playlist contains` does not require authentication or network access.
+
 Playlist deletion means unfollowing the playlist, matching Spotify's API semantics.
 
 ## Extended streaming history

@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+	"time"
+)
 
 func TestSpotifyURI(t *testing.T) {
 	tests := []struct {
@@ -102,6 +106,61 @@ func TestPlaylistPaginationValidation(t *testing.T) {
 				t.Fatalf("playlistGetItems(%q) did not return an error", test.args)
 			}
 		})
+	}
+}
+
+func TestPlaylistCacheContains(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "playlists.db")
+	cachedAt := time.Date(2026, time.March, 18, 12, 0, 0, 0, time.UTC)
+	playlists := []cachedPlaylist{
+		{ID: "playlist1", Name: "First", SnapshotID: "snapshot1", TrackIDs: []string{"track1", "track2", "track1"}},
+		{ID: "playlist2", Name: "Second", SnapshotID: "snapshot2"},
+	}
+	if err := replacePlaylistCache(path, playlists, cachedAt); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := queryPlaylistContains(path, "playlist1", "track2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Contains || result.PlaylistName != "First" || result.CachedAt != cachedAt.Format(time.RFC3339) {
+		t.Fatalf("query result = %+v", result)
+	}
+
+	result, err = queryPlaylistContains(path, "playlist2", "track2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Contains {
+		t.Fatalf("query result = %+v, want contains false", result)
+	}
+
+	if _, err := queryPlaylistContains(path, "missing", "track2"); err == nil {
+		t.Fatal("missing playlist did not return an error")
+	}
+}
+
+func TestPlaylistCacheReplacementRemovesOldData(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "playlists.db")
+	if err := replacePlaylistCache(path, []cachedPlaylist{{ID: "old", Name: "Old", TrackIDs: []string{"track"}}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := replacePlaylistCache(path, []cachedPlaylist{{ID: "new", Name: "New"}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queryPlaylistContains(path, "old", "track"); err == nil {
+		t.Fatal("replaced playlist remained in cache")
+	}
+}
+
+func TestExactSpotifyID(t *testing.T) {
+	id, err := exactSpotifyID("https://open.spotify.com/track/abc123?si=value", "track")
+	if err != nil || id != "abc123" {
+		t.Fatalf("exactSpotifyID() = %q, %v", id, err)
+	}
+	if _, err := exactSpotifyID("spotify:album:abc123", "track"); err == nil {
+		t.Fatal("exactSpotifyID accepted the wrong item type")
 	}
 }
 

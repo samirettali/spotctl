@@ -233,13 +233,16 @@ func runQueue(args []string) error {
 
 func runPlaylist(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: spotctl playlist list|get|items|create|update|add|remove|delete")
+		return errors.New("usage: spotctl playlist list|get|items|create|update|add|remove|delete|cache|contains")
 	}
+	if args[0] == "contains" {
+		return playlistContains(args[1:])
+	}
+
 	client, err := newSpotifyClient()
 	if err != nil {
 		return err
 	}
-
 	switch args[0] {
 	case "list":
 		return playlistList(client, args[1:])
@@ -263,6 +266,8 @@ func runPlaylist(args []string) error {
 			return errors.New("usage: spotctl playlist delete PLAYLIST")
 		}
 		return outputRequest(client, http.MethodDelete, "/playlists/"+spotifyID(args[1], "playlist")+"/followers", nil, nil)
+	case "cache":
+		return playlistCache(client, args[1:])
 	default:
 		return fmt.Errorf("unknown playlist command %q", args[0])
 	}
