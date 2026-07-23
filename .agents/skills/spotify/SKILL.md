@@ -29,15 +29,32 @@ Top items require `user-top-read`; recent history requires `user-read-recently-p
 Search before mutating when the user supplied a title rather than an exact Spotify URI, URL, or ID:
 
 ```sh
-spotctl search --type track --limit 10 "track and artist"
+spotctl search --type track "track and artist"
 spotctl search --type album --limit 10 "album and artist"
-spotctl search --type artist --limit 10 "artist"
-spotctl search --type playlist --limit 10 "playlist"
+spotctl search --type artist --limit 5 "artist"
+spotctl search --type playlist --limit 50 --offset 50 "playlist"
 ```
+
+Search limit is 1-50 (default 20) and offset is 0-1000 — Spotify's own caps; values outside these ranges are rejected before any request is made.
 
 Use IDs or URIs from the JSON response. Match both title and artist; do not blindly select the first result when several plausible matches exist. Ask the user to choose if intent remains ambiguous.
 
 Items may be passed as a Spotify URI, an `open.spotify.com` URL, or a bare track ID.
+
+## Parameter limits
+
+Defaults in parentheses; hard caps are Spotify's. Out-of-range values fail locally with a descriptive error, so use these instead of probing:
+
+| Command | Limits |
+|---|---|
+| `search` | `--limit` 1-50 (20), `--offset` 0-1000 |
+| `top tracks\|artists` | `--limit` 1-50 (20), `--offset` >= 0 |
+| `history recent` | `--limit` 1-50 (20); Spotify retains only the last ~50 plays |
+| `playlist list` | `--limit` 1-50 (50) |
+| `playlist items` | `--limit` 1-100 (100) |
+| `playlist add\|remove` | at most 100 items per request |
+| `playlist search` | `--limit` 1-100 (25) |
+| `playlist sample` | `--limit` 1-100 (10) |
 
 ## Listening statistics
 

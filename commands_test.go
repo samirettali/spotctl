@@ -41,6 +41,28 @@ func TestSpotifyURI(t *testing.T) {
 	}
 }
 
+func TestSearchValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "missing query", args: []string{"--limit", "5"}},
+		{name: "invalid type", args: []string{"--type", "episode", "query"}},
+		{name: "limit too low", args: []string{"--limit", "0", "query"}},
+		{name: "limit too high", args: []string{"--limit", "51", "query"}},
+		{name: "negative offset", args: []string{"--offset", "-1", "query"}},
+		{name: "offset too high", args: []string{"--offset", "1001", "query"}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := runSearch(test.args); err == nil {
+				t.Fatalf("runSearch(%q) did not return an error", test.args)
+			}
+		})
+	}
+}
+
 func TestTopValidation(t *testing.T) {
 	tests := []struct {
 		name string

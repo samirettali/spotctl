@@ -15,19 +15,23 @@ func runSearch(args []string) error {
 	flags := flag.NewFlagSet("search", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	itemType := flags.String("type", "track", "track, album, artist, or playlist")
-	limit := flags.Int("limit", 10, "number of results (1-10)")
+	limit := flags.Int("limit", 20, "number of results (1-50, Spotify's maximum)")
+	offset := flags.Int("offset", 0, "result offset (0-1000, Spotify's maximum)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() == 0 {
-		return errors.New("usage: spotctl search [--type TYPE] [--limit N] QUERY")
+		return errors.New("usage: spotctl search [--type TYPE] [--limit N] [--offset N] QUERY")
 	}
 	validTypes := map[string]bool{"track": true, "album": true, "artist": true, "playlist": true}
 	if !validTypes[*itemType] {
 		return fmt.Errorf("unsupported search type %q", *itemType)
 	}
-	if *limit < 1 || *limit > 10 {
-		return errors.New("search limit must be between 1 and 10")
+	if *limit < 1 || *limit > 50 {
+		return errors.New("search limit must be between 1 and 50 (Spotify's maximum)")
+	}
+	if *offset < 0 || *offset > 1000 {
+		return errors.New("search offset must be between 0 and 1000 (Spotify's maximum)")
 	}
 
 	client, err := newSpotifyClient()
@@ -35,9 +39,10 @@ func runSearch(args []string) error {
 		return err
 	}
 	result, err := client.request(http.MethodGet, "/search", url.Values{
-		"q":     {strings.Join(flags.Args(), " ")},
-		"type":  {*itemType},
-		"limit": {strconv.Itoa(*limit)},
+		"q":      {strings.Join(flags.Args(), " ")},
+		"type":   {*itemType},
+		"limit":  {strconv.Itoa(*limit)},
+		"offset": {strconv.Itoa(*offset)},
 	}, nil)
 	if err != nil {
 		return err
