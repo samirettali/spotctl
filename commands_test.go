@@ -1,10 +1,37 @@
 package main
 
 import (
+	"io"
+	"net/http"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func stubResponse(status int, body string, header http.Header) *http.Response {
+	if header == nil {
+		header = http.Header{}
+	}
+	return &http.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     header,
+	}
+}
+
+func testClient(transport roundTripFunc) *spotifyClient {
+	return &spotifyClient{
+		httpClient: &http.Client{Transport: transport},
+		creds:      credentials{AccessToken: "token", ExpiresAt: time.Now().Add(time.Hour)},
+	}
+}
 
 func TestSpotifyURI(t *testing.T) {
 	tests := []struct {
@@ -384,6 +411,67 @@ func TestPlaylistCacheStatus(t *testing.T) {
 	}
 	if status.upToDate(24 * time.Hour) {
 		t.Fatal("cache without track metadata reported up to date")
+	}
+}
+
+func TestQueueAddItems(t *testing.T) {
+	original := retrySleep
+	var slept []time.Duration
+	retrySleep = func(wait time.Duration) { slept = append(slept, wait) }
+	t.Cleanup(func() { retrySleep = original })
+
+	rateLimited := `{"error":{"status":429,"message":"rate limited"}}`
+	calls := map[string]int{}
+	client := testClient(func(request *http.Request) (*http.Response, error) {
+		uri := request.URL.Query().Get("uri")
+		calls[uri]++
+		switch uri {
+		case "spotify:track:ok":
+			return stubResponse(http.StatusNoContent, "", nil), nil
+		case "spotify:track:slow": // 429 twice, then succeeds
+			if calls[uri] <= 2 {
+				return stubResponse(http.StatusTooManyRequests, rateLimited, http.Header{"Retry-After": {"0"}}), nil
+			}
+			return stubResponse(http.StatusNoContent, "", nil), nil
+		default: // always rate limited
+			return stubResponse(http.StatusTooManyRequests, rateLimited, http.Header{"Retry-After": {"0"}}), nil
+		}
+	})
+
+	result := queueAddItems(client, []string{"spotify:track:ok", "spotify:track:slow", "spotify:track:nope"}, "device1")
+	if result.Queued != 2 {
+		t.Fatalf("queued = %d, want 2", result.Queued)
+	}
+	if len(result.Failed) != 1 || result.Failed[0].URI != "spotify:track:nope" {
+		t.Fatalf("failed = %+v", result.Failed)
+	}
+	if calls["spotify:track:slow"] != 3 {
+		t.Fatalf("slow track attempts = %d, want 3", calls["spotify:track:slow"])
+	}
+	if calls["spotify:track:nope"] != maxRateLimitRetries+1 {
+		t.Fatalf("nope track attempts = %d, want %d", calls["spotify:track:nope"], maxRateLimitRetries+1)
+	}
+	// two retries for slow, five for nope
+	if len(slept) != 2+maxRateLimitRetries {
+		t.Fatalf("sleeps = %d, want %d", len(slept), 2+maxRateLimitRetries)
+	}
+}
+
+func TestRequestWithRetryStopsOnNon429(t *testing.T) {
+	original := retrySleep
+	retrySleep = func(time.Duration) {}
+	t.Cleanup(func() { retrySleep = original })
+
+	calls := 0
+	client := testClient(func(*http.Request) (*http.Response, error) {
+		calls++
+		return stubResponse(http.StatusNotFound, `{"error":{"status":404,"message":"no device"}}`, nil), nil
+	})
+	if _, err := requestWithRetry(client, http.MethodPost, "/me/player/queue", nil, nil); err == nil {
+		t.Fatal("expected an error")
+	}
+	if calls != 1 {
+		t.Fatalf("attempts = %d, want 1 (no retry on 404)", calls)
 	}
 }
 

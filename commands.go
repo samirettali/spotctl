@@ -215,25 +215,52 @@ func runQueue(args []string) error {
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
-		if flags.NArg() != 1 {
-			return errors.New("usage: spotctl queue add [--device ID] ITEM")
+		if flags.NArg() == 0 {
+			return errors.New("usage: spotctl queue add [--device ID] ITEM...")
 		}
-		uri, err := spotifyURI(flags.Arg(0), "track")
-		if err != nil {
-			return err
+		uris := make([]string, 0, flags.NArg())
+		for _, item := range flags.Args() {
+			uri, err := spotifyURI(item, "track")
+			if err != nil {
+				return err
+			}
+			uris = append(uris, uri)
 		}
-		query := url.Values{"uri": {uri}}
-		if *device != "" {
-			query.Set("device_id", *device)
-		}
-		result, err := client.request(http.MethodPost, "/me/player/queue", query, nil)
-		if err != nil {
-			return err
-		}
-		return writeJSON(result)
+		return writeJSON(queueAddItems(client, uris, *device))
 	default:
 		return fmt.Errorf("unknown queue command %q", args[0])
 	}
+}
+
+type queueAddFailure struct {
+	URI   string `json:"uri"`
+	Error string `json:"error"`
+}
+
+type queueAddResult struct {
+	Queued int               `json:"queued"`
+	Failed []queueAddFailure `json:"failed"`
+}
+
+// queueAddItems queues each URI in order with per-item 429 retry. Spotify's
+// queue endpoint accepts one URI per request, so this is a sequential loop;
+// items that still fail after all retries are collected in Failed rather than
+// aborting the batch.
+func queueAddItems(client *spotifyClient, uris []string, device string) queueAddResult {
+	result := queueAddResult{Failed: []queueAddFailure{}}
+	query := url.Values{}
+	if device != "" {
+		query.Set("device_id", device)
+	}
+	for _, uri := range uris {
+		query.Set("uri", uri)
+		if _, err := requestWithRetry(client, http.MethodPost, "/me/player/queue", query, nil); err != nil {
+			result.Failed = append(result.Failed, queueAddFailure{URI: uri, Error: err.Error()})
+			continue
+		}
+		result.Queued++
+	}
+	return result
 }
 
 func runPlaylist(args []string) error {

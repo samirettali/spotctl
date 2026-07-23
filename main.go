@@ -70,7 +70,7 @@ Usage:
   spotctl history recent [--limit N] [--before UNIX_MS | --after UNIX_MS]
   spotctl device list
   spotctl queue get
-  spotctl queue add [--device ID] ITEM
+  spotctl queue add [--device ID] ITEM...
   spotctl play TYPE [--device ID] ITEM
   spotctl playlist list [--limit N] [--offset N]
   spotctl playlist get PLAYLIST

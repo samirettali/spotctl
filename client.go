@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -17,6 +19,8 @@ type APIError struct {
 	Status  int
 	Message string
 	Details any
+	// RetryAfter is the server's requested wait on a 429, when present.
+	RetryAfter time.Duration
 }
 
 func (err *APIError) Error() string {
@@ -103,7 +107,16 @@ func (client *spotifyClient) request(method, path string, query url.Values, body
 		return nil, fmt.Errorf("read Spotify response: %w", err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, decodeAPIError(response.StatusCode, data)
+		err := decodeAPIError(response.StatusCode, data)
+		if response.StatusCode == http.StatusTooManyRequests {
+			if seconds, convErr := strconv.Atoi(strings.TrimSpace(response.Header.Get("Retry-After"))); convErr == nil && seconds >= 0 {
+				var apiErr *APIError
+				if errors.As(err, &apiErr) {
+					apiErr.RetryAfter = time.Duration(seconds) * time.Second
+				}
+			}
+		}
+		return nil, err
 	}
 	if len(strings.TrimSpace(string(data))) == 0 {
 		return json.RawMessage(`{"ok":true}`), nil
@@ -112,6 +125,34 @@ func (client *spotifyClient) request(method, path string, query url.Values, body
 		return nil, fmt.Errorf("Spotify returned invalid JSON")
 	}
 	return json.RawMessage(data), nil
+}
+
+// retrySleep is overridable so tests can exercise the backoff without waiting.
+var retrySleep = time.Sleep
+
+const maxRateLimitRetries = 5
+
+// requestWithRetry retries only on HTTP 429, backing off exponentially from
+// one second and honoring the server's Retry-After header as a floor. Every
+// other error (and success) returns immediately.
+func requestWithRetry(client *spotifyClient, method, path string, query url.Values, body any) (json.RawMessage, error) {
+	backoff := time.Second
+	for attempt := 0; ; attempt++ {
+		result, err := client.request(method, path, query, body)
+		if err == nil {
+			return result, nil
+		}
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.Status != http.StatusTooManyRequests || attempt >= maxRateLimitRetries {
+			return nil, err
+		}
+		wait := backoff
+		if apiErr.RetryAfter > wait {
+			wait = apiErr.RetryAfter
+		}
+		retrySleep(wait)
+		backoff *= 2
+	}
 }
 
 func decodeAPIError(status int, data []byte) error {

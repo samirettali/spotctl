@@ -109,12 +109,14 @@ Inspect the current queue:
 spotctl queue get
 ```
 
-Append a track or episode:
+Append one or more tracks or episodes, in the given order:
 
 ```sh
 spotctl queue add spotify:track:TRACK_ID
-spotctl queue add --device DEVICE_ID spotify:track:TRACK_ID
+spotctl queue add --device DEVICE_ID spotify:track:ONE spotify:track:TWO spotify:track:THREE
 ```
+
+Spotify's API queues one item per request, so spotctl sends them sequentially; a malformed item URI fails the whole command before anything is queued, but a runtime failure on one item does not abort the rest. The command returns `{"queued": N, "failed": [...]}` — `failed` lists only items that could not be queued after automatic retries (each entry has the item `uri` and the `error`), and is empty on full success. Report the failed items to the user when the array is non-empty. Rate-limit (429) responses are retried automatically with exponential backoff, so no manual pacing is needed.
 
 Adding requires Spotify Premium and an active playback device. Spotify's API cannot remove, clear, replace, or reorder queue entries. State that limitation instead of attempting a workaround unless the user asks for one.
 
