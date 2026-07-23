@@ -84,12 +84,15 @@ spotctl playlist remove PLAYLIST_ID TRACK_ID
 spotctl playlist delete PLAYLIST_ID
 ```
 
-Cache every owned or followed playlist and all of its tracks in SQLite, then perform an offline membership check using bare IDs, Spotify URIs, or Spotify URLs:
+Cache every owned or followed playlist and all of its tracks in SQLite, then check one or more tracks against the entire cache using bare IDs, Spotify URIs, or Spotify URLs:
 
 ```sh
 spotctl playlist cache
-spotctl playlist contains PLAYLIST_ID TRACK_ID
+spotctl playlist contains TRACK_ID
+spotctl playlist contains TRACK_ID spotify:track:OTHER_TRACK_ID
 ```
+
+The result reports whether each track occurs in any cached playlist and lists every matching playlist. Input order is preserved, making bulk checks suitable for filtering recommendation candidates before queueing them.
 
 The default database is `$XDG_CACHE_HOME/spotctl/playlists.db` (or the platform user cache directory). Pass `--db PATH` to either command to use another database. Refreshes replace the cache atomically, and `playlist contains` does not require authentication or network access.
 

@@ -7,7 +7,7 @@ import (
 	"os"
 )
 
-const version = "0.5.0"
+const version = "0.6.0"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -81,7 +81,7 @@ Usage:
   spotctl playlist remove PLAYLIST ITEM...
   spotctl playlist delete PLAYLIST
   spotctl playlist cache [--db PATH]
-  spotctl playlist contains [--db PATH] PLAYLIST TRACK
+  spotctl playlist contains [--db PATH] TRACK...
 
 ITEM, PLAYLIST, and TRACK may be Spotify URIs, open.spotify.com URLs, or bare IDs.
 All command output is JSON.

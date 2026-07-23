@@ -53,12 +53,20 @@ type playlistCacheResult struct {
 	CachedAt  string `json:"cached_at"`
 }
 
+type cachedPlaylistReference struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 type playlistContainsResult struct {
-	PlaylistID   string `json:"playlist_id"`
-	PlaylistName string `json:"playlist_name"`
-	TrackID      string `json:"track_id"`
-	Contains     bool   `json:"contains"`
-	CachedAt     string `json:"cached_at"`
+	TrackID   string                    `json:"track_id"`
+	Contains  bool                      `json:"contains"`
+	Playlists []cachedPlaylistReference `json:"playlists"`
+}
+
+type playlistContainsResults struct {
+	Results  []playlistContainsResult `json:"results"`
+	CachedAt string                   `json:"cached_at"`
 }
 
 func playlistCache(client *spotifyClient, args []string) error {
@@ -104,23 +112,23 @@ func playlistContains(args []string) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if flags.NArg() != 2 {
-		return errors.New("usage: spotctl playlist contains [--db PATH] PLAYLIST TRACK")
+	if flags.NArg() == 0 {
+		return errors.New("usage: spotctl playlist contains [--db PATH] TRACK...")
 	}
 
-	playlistID, err := exactSpotifyID(flags.Arg(0), "playlist")
-	if err != nil {
-		return err
-	}
-	trackID, err := exactSpotifyID(flags.Arg(1), "track")
-	if err != nil {
-		return err
+	trackIDs := make([]string, 0, flags.NArg())
+	for _, value := range flags.Args() {
+		trackID, err := exactSpotifyID(value, "track")
+		if err != nil {
+			return err
+		}
+		trackIDs = append(trackIDs, trackID)
 	}
 	path, err := resolvePlaylistCachePath(*databasePath)
 	if err != nil {
 		return err
 	}
-	result, err := queryPlaylistContains(path, playlistID, trackID)
+	result, err := queryPlaylistContains(path, trackIDs)
 	if err != nil {
 		return err
 	}
@@ -233,6 +241,12 @@ func openPlaylistCache(path string) (*sql.DB, error) {
 		);
 		CREATE INDEX IF NOT EXISTS playlist_tracks_lookup
 			ON playlist_tracks (playlist_id, track_id);
+		CREATE INDEX IF NOT EXISTS playlist_tracks_track_lookup
+			ON playlist_tracks (track_id);
+		CREATE TABLE IF NOT EXISTS playlist_cache_metadata (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			cached_at TEXT NOT NULL
+		);
 	`); err != nil {
 		database.Close()
 		return nil, fmt.Errorf("initialize playlist cache: %w", err)
@@ -259,6 +273,12 @@ func replacePlaylistCache(path string, playlists []cachedPlaylist, cachedAt time
 	if _, err := transaction.Exec("DELETE FROM playlists"); err != nil {
 		return fmt.Errorf("clear playlist cache: %w", err)
 	}
+	if _, err := transaction.Exec(
+		"INSERT INTO playlist_cache_metadata (id, cached_at) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET cached_at = excluded.cached_at",
+		cachedAt.Format(time.RFC3339),
+	); err != nil {
+		return fmt.Errorf("update playlist cache metadata: %w", err)
+	}
 	for _, playlist := range playlists {
 		if _, err := transaction.Exec(
 			"INSERT INTO playlists (id, name, snapshot_id, cached_at) VALUES (?, ?, ?, ?)",
@@ -281,27 +301,56 @@ func replacePlaylistCache(path string, playlists []cachedPlaylist, cachedAt time
 	return nil
 }
 
-func queryPlaylistContains(path, playlistID, trackID string) (playlistContainsResult, error) {
+func queryPlaylistContains(path string, trackIDs []string) (playlistContainsResults, error) {
 	database, err := openPlaylistCache(path)
 	if err != nil {
-		return playlistContainsResult{}, err
+		return playlistContainsResults{}, err
 	}
 	defer database.Close()
 
-	result := playlistContainsResult{PlaylistID: playlistID, TrackID: trackID}
+	result := playlistContainsResults{Results: make([]playlistContainsResult, 0, len(trackIDs))}
 	if err := database.QueryRow(
-		"SELECT name, cached_at FROM playlists WHERE id = ?", playlistID,
-	).Scan(&result.PlaylistName, &result.CachedAt); err != nil {
+		"SELECT cached_at FROM playlist_cache_metadata WHERE id = 1",
+	).Scan(&result.CachedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return playlistContainsResult{}, fmt.Errorf("playlist %q is not in the cache; run 'spotctl playlist cache'", playlistID)
+			return playlistContainsResults{}, errors.New("playlist cache is empty; run 'spotctl playlist cache'")
 		}
-		return playlistContainsResult{}, fmt.Errorf("query playlist cache: %w", err)
+		return playlistContainsResults{}, fmt.Errorf("query playlist cache metadata: %w", err)
 	}
-	if err := database.QueryRow(
-		"SELECT EXISTS(SELECT 1 FROM playlist_tracks WHERE playlist_id = ? AND track_id = ?)",
-		playlistID, trackID,
-	).Scan(&result.Contains); err != nil {
-		return playlistContainsResult{}, fmt.Errorf("query playlist tracks: %w", err)
+
+	for _, trackID := range trackIDs {
+		trackResult := playlistContainsResult{
+			TrackID:   trackID,
+			Playlists: make([]cachedPlaylistReference, 0),
+		}
+		rows, err := database.Query(`
+			SELECT playlists.id, playlists.name
+			FROM playlist_tracks
+			JOIN playlists ON playlists.id = playlist_tracks.playlist_id
+			WHERE playlist_tracks.track_id = ?
+			GROUP BY playlists.id, playlists.name
+			ORDER BY playlists.name, playlists.id
+		`, trackID)
+		if err != nil {
+			return playlistContainsResults{}, fmt.Errorf("query playlist tracks: %w", err)
+		}
+		for rows.Next() {
+			var playlist cachedPlaylistReference
+			if err := rows.Scan(&playlist.ID, &playlist.Name); err != nil {
+				rows.Close()
+				return playlistContainsResults{}, fmt.Errorf("scan playlist match: %w", err)
+			}
+			trackResult.Playlists = append(trackResult.Playlists, playlist)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return playlistContainsResults{}, fmt.Errorf("iterate playlist matches: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return playlistContainsResults{}, fmt.Errorf("close playlist matches: %w", err)
+		}
+		trackResult.Contains = len(trackResult.Playlists) > 0
+		result.Results = append(result.Results, trackResult)
 	}
 	return result, nil
 }

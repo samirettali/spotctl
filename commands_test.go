@@ -114,30 +114,34 @@ func TestPlaylistCacheContains(t *testing.T) {
 	cachedAt := time.Date(2026, time.March, 18, 12, 0, 0, 0, time.UTC)
 	playlists := []cachedPlaylist{
 		{ID: "playlist1", Name: "First", SnapshotID: "snapshot1", TrackIDs: []string{"track1", "track2", "track1"}},
-		{ID: "playlist2", Name: "Second", SnapshotID: "snapshot2"},
+		{ID: "playlist2", Name: "Second", SnapshotID: "snapshot2", TrackIDs: []string{"track2"}},
 	}
 	if err := replacePlaylistCache(path, playlists, cachedAt); err != nil {
 		t.Fatal(err)
 	}
 
-	result, err := queryPlaylistContains(path, "playlist1", "track2")
+	result, err := queryPlaylistContains(path, []string{"track2", "missing"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Contains || result.PlaylistName != "First" || result.CachedAt != cachedAt.Format(time.RFC3339) {
+	if result.CachedAt != cachedAt.Format(time.RFC3339) || len(result.Results) != 2 {
 		t.Fatalf("query result = %+v", result)
 	}
-
-	result, err = queryPlaylistContains(path, "playlist2", "track2")
-	if err != nil {
-		t.Fatal(err)
+	if !result.Results[0].Contains || len(result.Results[0].Playlists) != 2 {
+		t.Fatalf("track2 result = %+v", result.Results[0])
 	}
-	if result.Contains {
-		t.Fatalf("query result = %+v, want contains false", result)
+	if result.Results[0].Playlists[0].ID != "playlist1" || result.Results[0].Playlists[1].ID != "playlist2" {
+		t.Fatalf("track2 playlists = %+v", result.Results[0].Playlists)
 	}
+	if result.Results[1].Contains || len(result.Results[1].Playlists) != 0 {
+		t.Fatalf("missing track result = %+v", result.Results[1])
+	}
+}
 
-	if _, err := queryPlaylistContains(path, "missing", "track2"); err == nil {
-		t.Fatal("missing playlist did not return an error")
+func TestPlaylistCacheContainsRequiresRefresh(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "playlists.db")
+	if _, err := queryPlaylistContains(path, []string{"track"}); err == nil {
+		t.Fatal("uninitialized cache did not return an error")
 	}
 }
 
@@ -149,8 +153,12 @@ func TestPlaylistCacheReplacementRemovesOldData(t *testing.T) {
 	if err := replacePlaylistCache(path, []cachedPlaylist{{ID: "new", Name: "New"}}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queryPlaylistContains(path, "old", "track"); err == nil {
-		t.Fatal("replaced playlist remained in cache")
+	result, err := queryPlaylistContains(path, []string{"track"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Results[0].Contains {
+		t.Fatalf("replaced playlist remained in cache: %+v", result.Results[0])
 	}
 }
 
