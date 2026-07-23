@@ -17,3 +17,5 @@
 - Spotify does not expose Extended Streaming History through its Web API; users must request and download that archive manually through Spotify's account privacy page.
 - Queue mutation is append-only because Spotify does not expose remove, reorder, or clear operations.
 - Playlist caching uses a pure-Go SQLite driver, defaults to the OS user cache directory, and replaces the full cache atomically. Cache refresh metadata is stored separately so a successfully cached empty playlist library can be distinguished from an uninitialized cache.
+- The cache stores track names and artists (`tracks`/`track_artists` tables) to power the offline query commands (`playlist artists|stats|search|sample`). A cache written before that schema errors with "predates track metadata" on those commands (`contains` still works), and `cache --max-age` treats such a cache as stale even when fresh by time, so agents never loop between "skip refresh" and "needs refresh".
+- `playlist sample` picks a playlist uniformly at random and then a track within it, so heavily curated playlists do not dominate the sample.

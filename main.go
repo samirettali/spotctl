@@ -80,8 +80,12 @@ Usage:
   spotctl playlist add PLAYLIST ITEM...
   spotctl playlist remove PLAYLIST ITEM...
   spotctl playlist delete PLAYLIST
-  spotctl playlist cache [--db PATH]
+  spotctl playlist cache [--db PATH] [--max-age DURATION]
   spotctl playlist contains [--db PATH] TRACK...
+  spotctl playlist artists [--db PATH] [NAME...]
+  spotctl playlist stats [--db PATH]
+  spotctl playlist search [--db PATH] [--limit N] QUERY...
+  spotctl playlist sample [--db PATH] [--limit N] [--playlist NAME]
 
 ITEM, PLAYLIST, and TRACK may be Spotify URIs, open.spotify.com URLs, or bare IDs.
 All command output is JSON.

@@ -109,14 +109,27 @@ func TestPlaylistPaginationValidation(t *testing.T) {
 	}
 }
 
+func testCachedPlaylists() []cachedPlaylist {
+	shared := cachedTrack{ID: "track2", Name: "Shared Song", Artists: []cachedArtist{
+		{ID: "artist1", Name: "Alpha"},
+	}}
+	return []cachedPlaylist{
+		{ID: "playlist1", Name: "First", SnapshotID: "snapshot1", Tracks: []cachedTrack{
+			{ID: "track1", Name: "Opener", Artists: []cachedArtist{
+				{ID: "artist1", Name: "Alpha"},
+				{ID: "artist2", Name: "Beta"},
+			}},
+			shared,
+			{ID: "track1", Name: "Opener", Artists: []cachedArtist{{ID: "artist1", Name: "Alpha"}}},
+		}},
+		{ID: "playlist2", Name: "Second", SnapshotID: "snapshot2", Tracks: []cachedTrack{shared}},
+	}
+}
+
 func TestPlaylistCacheContains(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "playlists.db")
 	cachedAt := time.Date(2026, time.March, 18, 12, 0, 0, 0, time.UTC)
-	playlists := []cachedPlaylist{
-		{ID: "playlist1", Name: "First", SnapshotID: "snapshot1", TrackIDs: []string{"track1", "track2", "track1"}},
-		{ID: "playlist2", Name: "Second", SnapshotID: "snapshot2", TrackIDs: []string{"track2"}},
-	}
-	if err := replacePlaylistCache(path, playlists, cachedAt); err != nil {
+	if err := replacePlaylistCache(path, testCachedPlaylists(), cachedAt); err != nil {
 		t.Fatal(err)
 	}
 
@@ -147,7 +160,10 @@ func TestPlaylistCacheContainsRequiresRefresh(t *testing.T) {
 
 func TestPlaylistCacheReplacementRemovesOldData(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "playlists.db")
-	if err := replacePlaylistCache(path, []cachedPlaylist{{ID: "old", Name: "Old", TrackIDs: []string{"track"}}}, time.Now()); err != nil {
+	old := []cachedPlaylist{{ID: "old", Name: "Old", Tracks: []cachedTrack{
+		{ID: "track", Name: "Gone", Artists: []cachedArtist{{ID: "artist", Name: "Ghost"}}},
+	}}}
+	if err := replacePlaylistCache(path, old, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	if err := replacePlaylistCache(path, []cachedPlaylist{{ID: "new", Name: "New"}}, time.Now()); err != nil {
@@ -159,6 +175,193 @@ func TestPlaylistCacheReplacementRemovesOldData(t *testing.T) {
 	}
 	if result.Results[0].Contains {
 		t.Fatalf("replaced playlist remained in cache: %+v", result.Results[0])
+	}
+	artists, err := queryPlaylistArtists(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artists.Artists) != 0 {
+		t.Fatalf("replaced artists remained in cache: %+v", artists.Artists)
+	}
+}
+
+func TestPlaylistCacheArtists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "playlists.db")
+	if err := replacePlaylistCache(path, testCachedPlaylists(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	all, err := queryPlaylistArtists(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all.Artists) != 2 {
+		t.Fatalf("artists = %+v", all.Artists)
+	}
+	alpha := all.Artists[0]
+	if alpha.Name != "Alpha" || alpha.Tracks != 2 || alpha.Playlists != 2 {
+		t.Fatalf("alpha stats = %+v", alpha)
+	}
+	if all.Artists[1].Name != "Beta" || all.Artists[1].Tracks != 1 || all.Artists[1].Playlists != 1 {
+		t.Fatalf("beta stats = %+v", all.Artists[1])
+	}
+
+	filtered, err := queryPlaylistArtists(path, []string{"alp", "unknown"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered.Results) != 2 {
+		t.Fatalf("filtered results = %+v", filtered.Results)
+	}
+	if len(filtered.Results[0].Artists) != 1 || filtered.Results[0].Artists[0].Name != "Alpha" {
+		t.Fatalf("alpha query = %+v", filtered.Results[0])
+	}
+	if len(filtered.Results[1].Artists) != 0 {
+		t.Fatalf("unknown query matched = %+v", filtered.Results[1])
+	}
+}
+
+func TestPlaylistCacheStats(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "playlists.db")
+	if err := replacePlaylistCache(path, testCachedPlaylists(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := queryPlaylistStats(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats.Playlists) != 2 || stats.Playlists[0].Name != "First" || stats.Playlists[0].Tracks != 3 {
+		t.Fatalf("playlist stats = %+v", stats.Playlists)
+	}
+	if stats.TotalTracks != 4 || stats.DistinctTracks != 2 {
+		t.Fatalf("totals = %+v", stats)
+	}
+}
+
+func TestPlaylistCacheSearch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "playlists.db")
+	if err := replacePlaylistCache(path, testCachedPlaylists(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	result, err := queryPlaylistSearch(path, []string{"beta", "missing"}, 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Results) != 2 {
+		t.Fatalf("search results = %+v", result.Results)
+	}
+	byArtist := result.Results[0].Tracks
+	if len(byArtist) != 1 || byArtist[0].Name != "Opener" || len(byArtist[0].Playlists) != 1 {
+		t.Fatalf("beta search = %+v", byArtist)
+	}
+	if len(result.Results[1].Tracks) != 0 {
+		t.Fatalf("missing search matched = %+v", result.Results[1])
+	}
+}
+
+func TestPlaylistCacheSample(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "playlists.db")
+	if err := replacePlaylistCache(path, testCachedPlaylists(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	result, err := queryPlaylistSample(path, 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Tracks) != 2 {
+		t.Fatalf("sample should exhaust the two distinct tracks, got %+v", result.Tracks)
+	}
+	seen := map[string]bool{}
+	for _, track := range result.Tracks {
+		if seen[track.ID] {
+			t.Fatalf("sample repeated track %q", track.ID)
+		}
+		seen[track.ID] = true
+	}
+
+	filtered, err := queryPlaylistSample(path, 5, "second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered.Tracks) != 1 || filtered.Tracks[0].ID != "track2" || filtered.Tracks[0].Playlist.Name != "Second" {
+		t.Fatalf("filtered sample = %+v", filtered.Tracks)
+	}
+	if _, err := queryPlaylistSample(path, 5, "nope"); err == nil {
+		t.Fatal("sample with unmatched filter did not return an error")
+	}
+}
+
+func TestPlaylistCachePredatesTrackMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "playlists.db")
+	if err := replacePlaylistCache(path, testCachedPlaylists(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	database, err := openPlaylistCache(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("DELETE FROM tracks"); err != nil {
+		t.Fatal(err)
+	}
+	database.Close()
+	if _, err := queryPlaylistArtists(path, nil); err == nil {
+		t.Fatal("stale cache did not return an error")
+	}
+	if _, err := queryPlaylistContains(path, []string{"track2"}); err != nil {
+		t.Fatalf("contains should still work on a stale cache: %v", err)
+	}
+}
+
+func TestPlaylistCacheStatus(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "playlists.db")
+	status, err := readPlaylistCacheStatus(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.cachedAt.IsZero() {
+		t.Fatalf("uninitialized cache reported a timestamp: %+v", status)
+	}
+
+	cachedAt := time.Date(2026, time.March, 18, 12, 0, 0, 0, time.UTC)
+	if err := replacePlaylistCache(path, testCachedPlaylists(), cachedAt); err != nil {
+		t.Fatal(err)
+	}
+	status, err = readPlaylistCacheStatus(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.cachedAt.Equal(cachedAt) || status.playlists != 2 || status.tracks != 4 {
+		t.Fatalf("cache status = %+v", status)
+	}
+	if status.upToDate(time.Nanosecond) {
+		t.Fatal("expired cache reported up to date")
+	}
+
+	if err := replacePlaylistCache(path, testCachedPlaylists(), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	status, err = readPlaylistCacheStatus(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.upToDate(24 * time.Hour) {
+		t.Fatalf("fresh cache reported stale: %+v", status)
+	}
+
+	database, err := openPlaylistCache(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("DELETE FROM tracks"); err != nil {
+		t.Fatal(err)
+	}
+	database.Close()
+	status, err = readPlaylistCacheStatus(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.upToDate(24 * time.Hour) {
+		t.Fatal("cache without track metadata reported up to date")
 	}
 }
 
