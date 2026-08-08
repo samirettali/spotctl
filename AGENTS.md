@@ -8,6 +8,28 @@
 - `go vet ./...` — run static checks.
 - `go fmt ./...` — format Go files.
 
+## Releasing
+
+Bump `version` in `main.go` in a `chore: release vX.Y.Z` commit, then push a signed annotated
+tag. `.github/workflows/release.yml` does the rest: it publishes the GitHub release and starts
+the updater in `samirettali/nur` scoped to this package.
+
+- **The release matters, not the tag.** NUR's `pkgs/spotctl/update.sh` reads `releases/latest`
+  from the GitHub API, so a pushed tag with no release is invisible to it and the daily sweep
+  keeps reporting the previous version in silence. Publishing the release is the whole point of
+  the workflow; the dispatch only makes the bump immediate instead of same-day.
+- **A tag whose tree predates the workflow will not run it.** Actions evaluates workflows at the
+  ref that triggered them, so tagging an older commit is a silent no-op — no run, no release.
+  The tag has to sit on a commit that contains `.github/workflows/release.yml`.
+- **The dispatch uses `NUR_DISPATCH_TOKEN`**, a fine-grained PAT with Actions read/write on
+  `samirettali/nur` and nothing else, declared in the `infra` repo (`github/secrets.tf`). Actions
+  write rather than Contents write on purpose: enough to start a run, not enough to push a
+  derivation into the package channel. With the secret missing the step is skipped and the daily
+  sweep still picks the release up, so it degrades into a delay rather than a failure.
+- **NUR's updater rewrites `version` and `hash` but not `vendorHash`.** Adding a Go dependency
+  therefore breaks the automatic bump, which surfaces as an issue opened by NUR's workflow, not
+  as a silent wrong package. Keeping to the standard library avoids it.
+
 ## Conventions
 
 - Keep stdout machine-readable JSON; diagnostics belong on stderr.
