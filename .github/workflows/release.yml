@@ -1,0 +1,42 @@
+name: Release
+
+# The NUR updater reads releases/latest from the GitHub API, not tags, so a
+# pushed tag alone is invisible to it and the daily job would silently keep
+# reporting the previous version. Creating the release is what closes that gap;
+# the dispatch only makes it immediate instead of same-day.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # the secrets context is not available in a step-level if, so the token has
+    # to come through env to be testable
+    env:
+      NUR_DISPATCH_TOKEN: ${{ secrets.NUR_DISPATCH_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "${TAG}" --title "${TAG}" --generate-notes
+
+      # A fine-grained PAT with Actions read/write on samirettali/nur and
+      # nothing else: enough to start the updater, not enough to push a
+      # derivation into the package channel. Absent, the daily run picks the
+      # release up anyway, so a missing secret is a delay and not a failure.
+      - name: Ask NUR to update the package
+        if: ${{ env.NUR_DISPATCH_TOKEN != '' }}
+        env:
+          GH_TOKEN: ${{ env.NUR_DISPATCH_TOKEN }}
+        run: gh workflow run update.yml --repo samirettali/nur --field only=spotctl
