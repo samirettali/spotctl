@@ -27,6 +27,14 @@ type cachedTrack struct {
 	ID      string
 	Name    string
 	Artists []cachedArtist
+	AddedAt string
+	// Payload is the track object and ItemPayload the whole playlist item that
+	// wrapped it, both exactly as Spotify sent them. Storing them verbatim is
+	// what lets --full be served from disk without the schema growing a column
+	// every time Spotify adds a field; the item is what carries added_by and
+	// is_local, which the track object does not.
+	Payload     json.RawMessage
+	ItemPayload json.RawMessage
 }
 
 type cachedPlaylist struct {
@@ -34,23 +42,34 @@ type cachedPlaylist struct {
 	Name       string
 	SnapshotID string
 	Tracks     []cachedTrack
+	Payload    json.RawMessage
 }
 
 type playlistPage struct {
-	Items []struct {
-		ID         string `json:"id"`
-		Name       string `json:"name"`
-		SnapshotID string `json:"snapshot_id"`
-	} `json:"items"`
-	Next *string `json:"next"`
+	Items []json.RawMessage `json:"items"`
+	Next  *string           `json:"next"`
+}
+
+type playlistPageItem struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	SnapshotID string `json:"snapshot_id"`
 }
 
 type playlistItemPage struct {
-	Items []struct {
-		Item  *spotifyPlaylistItem `json:"item"`
-		Track *spotifyPlaylistItem `json:"track"`
-	} `json:"items"`
-	Next *string `json:"next"`
+	Items []json.RawMessage `json:"items"`
+	Next  *string           `json:"next"`
+}
+
+type playlistItemEntry struct {
+	AddedAt string               `json:"added_at"`
+	Item    *spotifyPlaylistItem `json:"item"`
+	Track   *spotifyPlaylistItem `json:"track"`
+}
+
+type rawPlaylistItemEntry struct {
+	Item  json.RawMessage `json:"item"`
+	Track json.RawMessage `json:"track"`
 }
 
 type spotifyPlaylistItem struct {
@@ -339,8 +358,20 @@ func fetchAllPlaylists(client *spotifyClient) ([]cachedPlaylist, error) {
 		if err := json.Unmarshal(data, &page); err != nil {
 			return nil, fmt.Errorf("decode playlists: %w", err)
 		}
-		for _, item := range page.Items {
-			playlist := cachedPlaylist{ID: item.ID, Name: item.Name, SnapshotID: item.SnapshotID}
+		for _, raw := range page.Items {
+			var item playlistPageItem
+			if err := json.Unmarshal(raw, &item); err != nil {
+				return nil, fmt.Errorf("decode playlist: %w", err)
+			}
+			if item.ID == "" {
+				continue
+			}
+			playlist := cachedPlaylist{
+				ID:         item.ID,
+				Name:       item.Name,
+				SnapshotID: item.SnapshotID,
+				Payload:    raw,
+			}
 			playlist.Tracks, err = fetchAllPlaylistTracks(client, item.ID)
 			if err != nil {
 				return nil, fmt.Errorf("fetch playlist %q: %w", item.Name, err)
@@ -373,7 +404,11 @@ func fetchAllPlaylistTracks(client *spotifyClient, playlistID string) ([]cachedT
 		if err := json.Unmarshal(data, &page); err != nil {
 			return nil, fmt.Errorf("decode playlist items: %w", err)
 		}
-		for _, entry := range page.Items {
+		for _, raw := range page.Items {
+			var entry playlistItemEntry
+			if err := json.Unmarshal(raw, &entry); err != nil {
+				return nil, fmt.Errorf("decode playlist item: %w", err)
+			}
 			item := entry.Item
 			if item == nil {
 				item = entry.Track
@@ -381,7 +416,18 @@ func fetchAllPlaylistTracks(client *spotifyClient, playlistID string) ([]cachedT
 			if item == nil || item.Type != "track" || item.ID == "" {
 				continue
 			}
-			track := cachedTrack{ID: item.ID, Name: item.Name}
+			var payloads rawPlaylistItemEntry
+			if err := json.Unmarshal(raw, &payloads); err != nil {
+				return nil, fmt.Errorf("decode playlist item payload: %w", err)
+			}
+			payload := payloads.Item
+			if len(payload) == 0 || string(payload) == "null" {
+				payload = payloads.Track
+			}
+			track := cachedTrack{
+				ID: item.ID, Name: item.Name, AddedAt: entry.AddedAt,
+				Payload: payload, ItemPayload: raw,
+			}
 			for _, artist := range item.Artists {
 				track.Artists = append(track.Artists, cachedArtist{ID: artist.ID, Name: artist.Name})
 			}
@@ -431,6 +477,8 @@ func openPlaylistCache(path string) (*sql.DB, error) {
 			playlist_id TEXT NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
 			position INTEGER NOT NULL,
 			track_id TEXT NOT NULL,
+			added_at TEXT,
+			payload TEXT,
 			PRIMARY KEY (playlist_id, position)
 		);
 		CREATE INDEX IF NOT EXISTS playlist_tracks_lookup
@@ -454,15 +502,81 @@ func openPlaylistCache(path string) (*sql.DB, error) {
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			cached_at TEXT NOT NULL
 		);
+		-- kept apart from playlist_cache_metadata: 'playlist list --refresh'
+		-- only rewrites playlist rows, and must not claim the track cache is
+		-- fresh, or the offline query commands would silently answer from a
+		-- half-populated database
+		CREATE TABLE IF NOT EXISTS playlist_list_metadata (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			cached_at TEXT NOT NULL,
+			href TEXT
+		);
 	`); err != nil {
 		database.Close()
 		return nil, fmt.Errorf("initialize playlist cache: %w", err)
+	}
+	if err := migratePlaylistCache(database); err != nil {
+		database.Close()
+		return nil, err
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
 		database.Close()
 		return nil, fmt.Errorf("secure playlist cache: %w", err)
 	}
 	return database, nil
+}
+
+// migratePlaylistCache adds the columns that back --full to caches created
+// before them. The rows stay NULL until the next refresh, which is what
+// requireCachedAt reports on.
+func migratePlaylistCache(database *sql.DB) error {
+	additions := []struct{ table, column, definition string }{
+		{"playlists", "payload", "TEXT"},
+		{"tracks", "payload", "TEXT"},
+		{"playlist_tracks", "added_at", "TEXT"},
+		{"playlist_tracks", "payload", "TEXT"},
+		{"playlist_list_metadata", "href", "TEXT"},
+	}
+	for _, addition := range additions {
+		has, err := columnExists(database, addition.table, addition.column)
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		if _, err := database.Exec(fmt.Sprintf(
+			"ALTER TABLE %s ADD COLUMN %s %s", addition.table, addition.column, addition.definition,
+		)); err != nil {
+			return fmt.Errorf("add %s.%s: %w", addition.table, addition.column, err)
+		}
+	}
+	return nil
+}
+
+func columnExists(database *sql.DB, table, column string) (bool, error) {
+	rows, err := database.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false, fmt.Errorf("inspect %s: %w", table, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			index      int
+			name       string
+			columnType string
+			notNull    int
+			preset     sql.NullString
+			primaryKey int
+		)
+		if err := rows.Scan(&index, &name, &columnType, &notNull, &preset, &primaryKey); err != nil {
+			return false, fmt.Errorf("inspect %s: %w", table, err)
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 func replacePlaylistCache(path string, playlists []cachedPlaylist, cachedAt time.Time) error {
@@ -483,29 +597,30 @@ func replacePlaylistCache(path string, playlists []cachedPlaylist, cachedAt time
 	if _, err := transaction.Exec("DELETE FROM tracks"); err != nil {
 		return fmt.Errorf("clear track cache: %w", err)
 	}
-	if _, err := transaction.Exec(
-		"INSERT INTO playlist_cache_metadata (id, cached_at) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET cached_at = excluded.cached_at",
-		cachedAt.Format(time.RFC3339),
-	); err != nil {
-		return fmt.Errorf("update playlist cache metadata: %w", err)
+	for _, table := range []string{"playlist_cache_metadata", "playlist_list_metadata"} {
+		if _, err := transaction.Exec(fmt.Sprintf(
+			"INSERT INTO %s (id, cached_at) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET cached_at = excluded.cached_at", table,
+		), cachedAt.Format(time.RFC3339)); err != nil {
+			return fmt.Errorf("update %s: %w", table, err)
+		}
 	}
 	for _, playlist := range playlists {
 		if _, err := transaction.Exec(
-			"INSERT INTO playlists (id, name, snapshot_id, cached_at) VALUES (?, ?, ?, ?)",
-			playlist.ID, playlist.Name, playlist.SnapshotID, cachedAt.Format(time.RFC3339),
+			"INSERT INTO playlists (id, name, snapshot_id, cached_at, payload) VALUES (?, ?, ?, ?, ?)",
+			playlist.ID, playlist.Name, playlist.SnapshotID, cachedAt.Format(time.RFC3339), string(playlist.Payload),
 		); err != nil {
 			return fmt.Errorf("cache playlist %q: %w", playlist.Name, err)
 		}
 		for position, track := range playlist.Tracks {
 			if _, err := transaction.Exec(
-				"INSERT INTO playlist_tracks (playlist_id, position, track_id) VALUES (?, ?, ?)",
-				playlist.ID, position, track.ID,
+				"INSERT INTO playlist_tracks (playlist_id, position, track_id, added_at, payload) VALUES (?, ?, ?, ?, ?)",
+				playlist.ID, position, track.ID, track.AddedAt, string(track.ItemPayload),
 			); err != nil {
 				return fmt.Errorf("cache track in playlist %q: %w", playlist.Name, err)
 			}
 			if _, err := transaction.Exec(
-				"INSERT OR IGNORE INTO tracks (id, name) VALUES (?, ?)",
-				track.ID, track.Name,
+				"INSERT OR IGNORE INTO tracks (id, name, payload) VALUES (?, ?, ?)",
+				track.ID, track.Name, string(track.Payload),
 			); err != nil {
 				return fmt.Errorf("cache track %q: %w", track.Name, err)
 			}
@@ -950,4 +1065,387 @@ func exactSpotifyID(value, expectedType string) (string, error) {
 		return "", fmt.Errorf("expected a Spotify %s, got %q", expectedType, value)
 	}
 	return parts[2], nil
+}
+
+// cachedPlaylistsUnavailable reports the shared guidance error when the cache
+// has never been populated, so callers can fall back to the API instead.
+var errCacheEmpty = errors.New("playlist cache is empty; run 'spotctl playlist cache'")
+
+var errCacheNoPayloads = errors.New("playlist cache predates stored payloads; run 'spotctl playlist cache'")
+
+func openInitializedCache(path string) (*sql.DB, string, error) {
+	database, err := openPlaylistCache(path)
+	if err != nil {
+		return nil, "", err
+	}
+	var cachedAt string
+	err = database.QueryRow("SELECT cached_at FROM playlist_list_metadata WHERE id = 1").Scan(&cachedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		database.Close()
+		return nil, "", errCacheEmpty
+	}
+	if err != nil {
+		database.Close()
+		return nil, "", fmt.Errorf("query playlist list metadata: %w", err)
+	}
+	return database, cachedAt, nil
+}
+
+// fetchPlaylistSummaries pages /me/playlists without descending into tracks,
+// which is what makes `playlist list --refresh` a few hundred milliseconds
+// instead of the minutes a full `playlist cache` takes.
+func fetchPlaylistSummaries(client *spotifyClient) ([]cachedPlaylist, string, error) {
+	playlists := []cachedPlaylist{}
+	collection := ""
+	offset := 0
+	for {
+		data, err := client.request(http.MethodGet, "/me/playlists", url.Values{
+			"limit":  {"50"},
+			"offset": {strconv.Itoa(offset)},
+		}, nil)
+		if err != nil {
+			return nil, "", fmt.Errorf("fetch playlists: %w", err)
+		}
+		var page struct {
+			playlistPage
+			Href string `json:"href"`
+		}
+		if err := json.Unmarshal(data, &page); err != nil {
+			return nil, "", fmt.Errorf("decode playlists: %w", err)
+		}
+		if collection == "" && page.Href != "" {
+			// Spotify rewrites /me/playlists to /users/{id}/playlists in the
+			// href, so the base is taken from its own answer rather than guessed
+			collection = strings.SplitN(page.Href, "?", 2)[0]
+		}
+		for _, raw := range page.Items {
+			var item playlistPageItem
+			if err := json.Unmarshal(raw, &item); err != nil {
+				return nil, "", fmt.Errorf("decode playlist: %w", err)
+			}
+			if item.ID == "" {
+				continue
+			}
+			playlists = append(playlists, cachedPlaylist{
+				ID:         item.ID,
+				Name:       item.Name,
+				SnapshotID: item.SnapshotID,
+				Payload:    raw,
+			})
+		}
+		if page.Next == nil || *page.Next == "" {
+			break
+		}
+		if len(page.Items) == 0 {
+			return nil, "", errors.New("Spotify returned an empty playlist page with a next page")
+		}
+		offset += len(page.Items)
+	}
+	return playlists, collection, nil
+}
+
+// upsertPlaylistSummaries rewrites playlist rows without deleting them, so the
+// cached tracks of playlists that still exist survive. Playlists that are gone
+// are deleted, and their tracks cascade with them, which is correct.
+func upsertPlaylistSummaries(path string, playlists []cachedPlaylist, collection string, cachedAt time.Time) error {
+	database, err := openPlaylistCache(path)
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+
+	transaction, err := database.Begin()
+	if err != nil {
+		return fmt.Errorf("begin playlist list update: %w", err)
+	}
+	defer transaction.Rollback()
+
+	keep := make(map[string]bool, len(playlists))
+	for _, playlist := range playlists {
+		keep[playlist.ID] = true
+		if _, err := transaction.Exec(`
+			INSERT INTO playlists (id, name, snapshot_id, cached_at, payload)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET
+				name = excluded.name,
+				snapshot_id = excluded.snapshot_id,
+				cached_at = excluded.cached_at,
+				payload = excluded.payload
+		`, playlist.ID, playlist.Name, playlist.SnapshotID, cachedAt.Format(time.RFC3339), string(playlist.Payload)); err != nil {
+			return fmt.Errorf("cache playlist %q: %w", playlist.Name, err)
+		}
+	}
+
+	rows, err := transaction.Query("SELECT id FROM playlists")
+	if err != nil {
+		return fmt.Errorf("list cached playlists: %w", err)
+	}
+	var stale []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan cached playlist: %w", err)
+		}
+		if !keep[id] {
+			stale = append(stale, id)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate cached playlists: %w", err)
+	}
+	for _, id := range stale {
+		if _, err := transaction.Exec("DELETE FROM playlists WHERE id = ?", id); err != nil {
+			return fmt.Errorf("drop stale playlist: %w", err)
+		}
+	}
+
+	if _, err := transaction.Exec(
+		"INSERT INTO playlist_list_metadata (id, cached_at, href) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET cached_at = excluded.cached_at, href = COALESCE(NULLIF(excluded.href, ''), playlist_list_metadata.href)",
+		cachedAt.Format(time.RFC3339), collection,
+	); err != nil {
+		return fmt.Errorf("update playlist list metadata: %w", err)
+	}
+	return transaction.Commit()
+}
+
+// replacePlaylistTracks rewrites one playlist's tracks, leaving every other
+// playlist and the cache metadata alone.
+func replacePlaylistTracks(path, playlistID string, tracks []cachedTrack) error {
+	database, err := openPlaylistCache(path)
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+
+	var exists int
+	if err := database.QueryRow("SELECT COUNT(*) FROM playlists WHERE id = ?", playlistID).Scan(&exists); err != nil {
+		return fmt.Errorf("query cached playlist: %w", err)
+	}
+	if exists == 0 {
+		// nothing to hang the tracks off: the playlists row is the parent
+		return nil
+	}
+
+	transaction, err := database.Begin()
+	if err != nil {
+		return fmt.Errorf("begin playlist items update: %w", err)
+	}
+	defer transaction.Rollback()
+
+	if _, err := transaction.Exec("DELETE FROM playlist_tracks WHERE playlist_id = ?", playlistID); err != nil {
+		return fmt.Errorf("clear cached playlist items: %w", err)
+	}
+	for position, track := range tracks {
+		if _, err := transaction.Exec(
+			"INSERT INTO playlist_tracks (playlist_id, position, track_id, added_at, payload) VALUES (?, ?, ?, ?, ?)",
+			playlistID, position, track.ID, track.AddedAt, string(track.ItemPayload),
+		); err != nil {
+			return fmt.Errorf("cache playlist item: %w", err)
+		}
+		if _, err := transaction.Exec(
+			"INSERT INTO tracks (id, name, payload) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, payload = excluded.payload",
+			track.ID, track.Name, string(track.Payload),
+		); err != nil {
+			return fmt.Errorf("cache track %q: %w", track.Name, err)
+		}
+		for artistPosition, artist := range track.Artists {
+			if _, err := transaction.Exec(
+				"INSERT OR IGNORE INTO track_artists (track_id, position, artist_id, artist_name) VALUES (?, ?, ?, ?)",
+				track.ID, artistPosition, artist.ID, artist.Name,
+			); err != nil {
+				return fmt.Errorf("cache artist %q: %w", artist.Name, err)
+			}
+		}
+	}
+	return transaction.Commit()
+}
+
+const spotifyAPIBase = "https://api.spotify.com/v1"
+
+func readListHref(database *sql.DB) string {
+	var href sql.NullString
+	if err := database.QueryRow("SELECT href FROM playlist_list_metadata WHERE id = 1").Scan(&href); err != nil {
+		return ""
+	}
+	return href.String
+}
+
+// queryCachedPlaylists serves `playlist list`. limit <= 0 means "everything in
+// one page": there is no API cap to respect when reading from disk, and the
+// common caller wants the whole library at once.
+func queryCachedPlaylists(path string, full bool, limit, offset int) (pagingEnvelope, string, error) {
+	database, cachedAt, err := openInitializedCache(path)
+	if err != nil {
+		return pagingEnvelope{}, "", err
+	}
+	defer database.Close()
+
+	var total int
+	if err := database.QueryRow("SELECT COUNT(*) FROM playlists").Scan(&total); err != nil {
+		return pagingEnvelope{}, "", fmt.Errorf("count cached playlists: %w", err)
+	}
+	if limit <= 0 {
+		limit = total
+	}
+
+	rows, err := database.Query(`
+		SELECT playlists.payload
+		FROM playlists
+		ORDER BY playlists.name, playlists.id
+		LIMIT ? OFFSET ?
+	`, limit, offset)
+	if err != nil {
+		return pagingEnvelope{}, "", fmt.Errorf("query cached playlists: %w", err)
+	}
+	defer rows.Close()
+
+	payloads := []json.RawMessage{}
+	trimmed := []minimalPlaylist{}
+	for rows.Next() {
+		var payload sql.NullString
+		if err := rows.Scan(&payload); err != nil {
+			return pagingEnvelope{}, "", fmt.Errorf("scan cached playlist: %w", err)
+		}
+		if !payload.Valid || payload.String == "" {
+			return pagingEnvelope{}, "", errCacheNoPayloads
+		}
+		if full {
+			payloads = append(payloads, json.RawMessage(payload.String))
+			continue
+		}
+		var object spotifyPlaylistObject
+		if err := json.Unmarshal([]byte(payload.String), &object); err != nil {
+			return pagingEnvelope{}, "", fmt.Errorf("decode cached playlist: %w", err)
+		}
+		trimmed = append(trimmed, trimPlaylist(object, false))
+	}
+	if err := rows.Err(); err != nil {
+		return pagingEnvelope{}, "", fmt.Errorf("iterate cached playlists: %w", err)
+	}
+
+	href, next, previous := pageLinks(readListHref(database), limit, offset, total)
+	envelope := pagingEnvelope{
+		Href: href, Limit: limit, Next: next, Offset: offset, Previous: previous,
+		Total: total, Source: "cache", CachedAt: cachedAt,
+	}
+	if full {
+		envelope.Items = payloads
+	} else {
+		envelope.Items = trimmed
+	}
+	return envelope, cachedAt, nil
+}
+
+// queryCachedPlaylist serves `playlist get`, which returns the playlist object
+// itself rather than a paging envelope, exactly as Spotify does.
+func queryCachedPlaylist(path, playlistID string, full bool) (any, string, error) {
+	database, cachedAt, err := openInitializedCache(path)
+	if err != nil {
+		return nil, "", err
+	}
+	defer database.Close()
+
+	var payload sql.NullString
+	err = database.QueryRow("SELECT payload FROM playlists WHERE id = ?", playlistID).Scan(&payload)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, "", fmt.Errorf("playlist %q is not in the cache; use --refresh", playlistID)
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("query cached playlist: %w", err)
+	}
+	if !payload.Valid || payload.String == "" {
+		return nil, "", errCacheNoPayloads
+	}
+	if full {
+		return json.RawMessage(payload.String), cachedAt, nil
+	}
+	var object spotifyPlaylistObject
+	if err := json.Unmarshal([]byte(payload.String), &object); err != nil {
+		return nil, "", fmt.Errorf("decode cached playlist: %w", err)
+	}
+	return trimPlaylist(object, true), cachedAt, nil
+}
+
+// queryCachedPlaylistItems serves `playlist items`, in playlist order. The
+// stored payload is the whole item object, so --full keeps added_by and
+// is_local rather than just the track.
+func queryCachedPlaylistItems(path, playlistID string, full bool, limit, offset int) (pagingEnvelope, error) {
+	database, cachedAt, err := openInitializedCache(path)
+	if err != nil {
+		return pagingEnvelope{}, err
+	}
+	defer database.Close()
+
+	var exists int
+	if err := database.QueryRow("SELECT COUNT(*) FROM playlists WHERE id = ?", playlistID).Scan(&exists); err != nil {
+		return pagingEnvelope{}, fmt.Errorf("query cached playlist: %w", err)
+	}
+	if exists == 0 {
+		return pagingEnvelope{}, fmt.Errorf("playlist %q is not in the cache; use --refresh", playlistID)
+	}
+
+	var total int
+	if err := database.QueryRow(
+		"SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id = ?", playlistID,
+	).Scan(&total); err != nil {
+		return pagingEnvelope{}, fmt.Errorf("count cached playlist items: %w", err)
+	}
+	if limit <= 0 {
+		limit = total
+	}
+
+	rows, err := database.Query(`
+		SELECT playlist_tracks.payload, tracks.payload
+		FROM playlist_tracks
+		JOIN tracks ON tracks.id = playlist_tracks.track_id
+		WHERE playlist_tracks.playlist_id = ?
+		ORDER BY playlist_tracks.position
+		LIMIT ? OFFSET ?
+	`, playlistID, limit, offset)
+	if err != nil {
+		return pagingEnvelope{}, fmt.Errorf("query cached playlist items: %w", err)
+	}
+	defer rows.Close()
+
+	payloads := []json.RawMessage{}
+	trimmed := []minimalTrack{}
+	for rows.Next() {
+		var itemPayload, trackPayload sql.NullString
+		if err := rows.Scan(&itemPayload, &trackPayload); err != nil {
+			return pagingEnvelope{}, fmt.Errorf("scan cached playlist item: %w", err)
+		}
+		if full {
+			if !itemPayload.Valid || itemPayload.String == "" {
+				return pagingEnvelope{}, errCacheNoPayloads
+			}
+			payloads = append(payloads, json.RawMessage(itemPayload.String))
+			continue
+		}
+		if !trackPayload.Valid || trackPayload.String == "" {
+			return pagingEnvelope{}, errCacheNoPayloads
+		}
+		var object spotifyTrackObject
+		if err := json.Unmarshal([]byte(trackPayload.String), &object); err != nil {
+			return pagingEnvelope{}, fmt.Errorf("decode cached track: %w", err)
+		}
+		trimmed = append(trimmed, trimTrack(object))
+	}
+	if err := rows.Err(); err != nil {
+		return pagingEnvelope{}, fmt.Errorf("iterate cached playlist items: %w", err)
+	}
+
+	collection := spotifyAPIBase + "/playlists/" + playlistID + "/items"
+	href, next, previous := pageLinks(collection, limit, offset, total)
+	envelope := pagingEnvelope{
+		Href: href, Limit: limit, Next: next, Offset: offset, Previous: previous,
+		Total: total, Source: "cache", CachedAt: cachedAt,
+	}
+	if full {
+		envelope.Items = payloads
+	} else {
+		envelope.Items = trimmed
+	}
+	return envelope, nil
 }

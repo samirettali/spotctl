@@ -65,16 +65,16 @@ Usage:
   spotctl auth login [--client-id ID] [--redirect-uri URI]
   spotctl auth status
   spotctl auth logout
-  spotctl search [--type track|album|artist|playlist] [--limit N] [--offset N] QUERY
-  spotctl top tracks|artists [--time-range short_term|medium_term|long_term] [--limit N] [--offset N]
-  spotctl history recent [--limit N] [--before UNIX_MS | --after UNIX_MS]
-  spotctl device list
-  spotctl queue get
+  spotctl search [--type track|album|artist|playlist] [--limit N] [--offset N] [--full] QUERY
+  spotctl top tracks|artists [--time-range short_term|medium_term|long_term] [--limit N] [--offset N] [--full]
+  spotctl history recent [--limit N] [--before UNIX_MS | --after UNIX_MS] [--full]
+  spotctl device list [--full]
+  spotctl queue get [--full]
   spotctl queue add [--device ID] ITEM...
   spotctl play TYPE [--device ID] ITEM
-  spotctl playlist list [--limit N] [--offset N]
-  spotctl playlist get PLAYLIST
-  spotctl playlist items PLAYLIST [--limit N] [--offset N]
+  spotctl playlist list [--db PATH] [--full] [--refresh]
+  spotctl playlist get PLAYLIST [--db PATH] [--full] [--refresh]
+  spotctl playlist items PLAYLIST [--db PATH] [--full] [--refresh]
   spotctl playlist create --name NAME [--description TEXT] [--public]
   spotctl playlist update PLAYLIST [--name NAME] [--description TEXT] [--public BOOL] [--collaborative BOOL]
   spotctl playlist add PLAYLIST ITEM...
@@ -90,12 +90,15 @@ Usage:
 ITEM, PLAYLIST, and TRACK may be Spotify URIs, open.spotify.com URLs, or bare IDs.
 All command output is JSON.
 
+Reads return a trimmed shape by default and Spotify's complete payload with
+--full. playlist list|get|items answer from the local cache without contacting
+Spotify; --refresh fetches and updates it, and an unpopulated cache falls back
+to the API on its own.
+
 Limits (defaults in parentheses; hard caps are Spotify's):
   search              limit 1-50 (20), offset 0-1000
   top                 limit 1-50 (20), offset 0 or greater
   history recent      limit 1-50 (20); Spotify retains only the last ~50 plays
-  playlist list       limit 1-50 (50)
-  playlist items      limit 1-100 (100)
   playlist add/remove at most 100 items per request
   playlist search     limit 1-100 (25)
   playlist sample     limit 1-100 (10)

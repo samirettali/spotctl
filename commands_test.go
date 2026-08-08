@@ -135,9 +135,15 @@ func TestRecentHistoryValidation(t *testing.T) {
 	}
 }
 
-func TestPlaylistPaginationValidation(t *testing.T) {
-	if err := playlistList(nil, []string{"--offset", "-1"}); err == nil {
-		t.Fatal("playlistList accepted a negative offset")
+func TestPlaylistReadValidation(t *testing.T) {
+	if err := playlistList([]string{"--limit", "-1"}); err == nil {
+		t.Fatal("playlist list accepted a negative limit")
+	}
+	if err := playlistList([]string{"--offset", "-1"}); err == nil {
+		t.Fatal("playlist list accepted a negative offset")
+	}
+	if err := playlistList([]string{"extra"}); err == nil {
+		t.Fatal("playlist list accepted a positional argument")
 	}
 
 	tests := []struct {
@@ -145,13 +151,13 @@ func TestPlaylistPaginationValidation(t *testing.T) {
 		args []string
 	}{
 		{name: "missing playlist", args: nil},
-		{name: "limit too low", args: []string{"playlist", "--limit", "0"}},
-		{name: "limit too high", args: []string{"playlist", "--limit", "101"}},
+		{name: "negative limit", args: []string{"playlist", "--limit", "-1"}},
 		{name: "negative offset", args: []string{"playlist", "--offset", "-1"}},
+		{name: "extra positional", args: []string{"playlist", "extra"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if err := playlistGetItems(nil, test.args); err == nil {
+			if err := playlistGetItems(test.args); err == nil {
 				t.Fatalf("playlistGetItems(%q) did not return an error", test.args)
 			}
 		})

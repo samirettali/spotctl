@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func runSearch(args []string) error {
@@ -17,6 +19,7 @@ func runSearch(args []string) error {
 	itemType := flags.String("type", "track", "track, album, artist, or playlist")
 	limit := flags.Int("limit", 20, "number of results (1-50, Spotify's maximum)")
 	offset := flags.Int("offset", 0, "result offset (0-1000, Spotify's maximum)")
+	full := flags.Bool("full", false, "return Spotify's complete payload instead of the trimmed shape")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -38,16 +41,14 @@ func runSearch(args []string) error {
 	if err != nil {
 		return err
 	}
-	result, err := client.request(http.MethodGet, "/search", url.Values{
+	return outputTrimmed(client, http.MethodGet, "/search", url.Values{
 		"q":      {strings.Join(flags.Args(), " ")},
 		"type":   {*itemType},
 		"limit":  {strconv.Itoa(*limit)},
 		"offset": {strconv.Itoa(*offset)},
-	}, nil)
-	if err != nil {
-		return err
-	}
-	return writeJSON(result)
+	}, nil, *full, func(data []byte) (any, error) {
+		return trimSearch(data, *itemType)
+	})
 }
 
 func runTop(args []string) error {
@@ -65,6 +66,7 @@ func runTop(args []string) error {
 	timeRange := flags.String("time-range", "medium_term", "short_term, medium_term, or long_term")
 	limit := flags.Int("limit", 20, "number of items (1-50)")
 	offset := flags.Int("offset", 0, "result offset (0 or greater)")
+	full := flags.Bool("full", false, "return Spotify's complete payload instead of the trimmed shape")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -86,11 +88,13 @@ func runTop(args []string) error {
 	if err != nil {
 		return err
 	}
-	return outputRequest(client, http.MethodGet, "/me/top/"+itemType, url.Values{
+	return outputTrimmed(client, http.MethodGet, "/me/top/"+itemType, url.Values{
 		"time_range": {*timeRange},
 		"limit":      {strconv.Itoa(*limit)},
 		"offset":     {strconv.Itoa(*offset)},
-	}, nil)
+	}, nil, *full, func(data []byte) (any, error) {
+		return trimTop(data, itemType)
+	})
 }
 
 func runHistory(args []string) error {
@@ -103,6 +107,7 @@ func runHistory(args []string) error {
 	limit := flags.Int("limit", 20, "number of tracks (1-50)")
 	before := flags.Int64("before", 0, "return tracks played before this Unix timestamp in milliseconds")
 	after := flags.Int64("after", 0, "return tracks played after this Unix timestamp in milliseconds")
+	full := flags.Bool("full", false, "return Spotify's complete payload instead of the trimmed shape")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -131,18 +136,27 @@ func runHistory(args []string) error {
 	if err != nil {
 		return err
 	}
-	return outputRequest(client, http.MethodGet, "/me/player/recently-played", query, nil)
+	return outputTrimmed(client, http.MethodGet, "/me/player/recently-played", query, nil, *full, trimHistoryResponse)
 }
 
 func runDevice(args []string) error {
-	if len(args) != 1 || args[0] != "list" {
-		return errors.New("usage: spotctl device list")
+	if len(args) == 0 || args[0] != "list" {
+		return errors.New("usage: spotctl device list [--full]")
+	}
+	flags := flag.NewFlagSet("device list", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	full := flags.Bool("full", false, "return Spotify's complete payload instead of the trimmed shape")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("usage: spotctl device list [--full]")
 	}
 	client, err := newSpotifyClient()
 	if err != nil {
 		return err
 	}
-	return outputRequest(client, http.MethodGet, "/me/player/devices", nil, nil)
+	return outputTrimmed(client, http.MethodGet, "/me/player/devices", nil, nil, *full, trimDevicesResponse)
 }
 
 func runPlay(args []string) error {
@@ -200,14 +214,16 @@ func runQueue(args []string) error {
 
 	switch args[0] {
 	case "get":
-		if len(args) != 1 {
-			return errors.New("usage: spotctl queue get")
-		}
-		result, err := client.request(http.MethodGet, "/me/player/queue", nil, nil)
-		if err != nil {
+		flags := flag.NewFlagSet("queue get", flag.ContinueOnError)
+		flags.SetOutput(os.Stderr)
+		full := flags.Bool("full", false, "return Spotify's complete payload instead of the trimmed shape")
+		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}
-		return writeJSON(result)
+		if flags.NArg() != 0 {
+			return errors.New("usage: spotctl queue get [--full]")
+		}
+		return outputTrimmed(client, http.MethodGet, "/me/player/queue", nil, nil, *full, trimQueueResponse)
 	case "add":
 		flags := flag.NewFlagSet("queue add", flag.ContinueOnError)
 		flags.SetOutput(os.Stderr)
@@ -280,6 +296,12 @@ func runPlaylist(args []string) error {
 		return playlistSearch(args[1:])
 	case "sample":
 		return playlistSample(args[1:])
+	case "list":
+		return playlistList(args[1:])
+	case "get":
+		return playlistGet(args[1:])
+	case "items":
+		return playlistGetItems(args[1:])
 	}
 
 	client, err := newSpotifyClient()
@@ -287,15 +309,6 @@ func runPlaylist(args []string) error {
 		return err
 	}
 	switch args[0] {
-	case "list":
-		return playlistList(client, args[1:])
-	case "get":
-		if len(args) != 2 {
-			return errors.New("usage: spotctl playlist get PLAYLIST")
-		}
-		return outputRequest(client, http.MethodGet, "/playlists/"+spotifyID(args[1], "playlist"), nil, nil)
-	case "items":
-		return playlistGetItems(client, args[1:])
 	case "create":
 		return playlistCreate(client, args[1:])
 	case "update":
@@ -314,42 +327,171 @@ func runPlaylist(args []string) error {
 	}
 }
 
-func playlistList(client *spotifyClient, args []string) error {
+// playlistList answers from the cache unless told otherwise, because the point
+// of it is to be instant. There is deliberately no age check: a freshness test
+// that reaches the network would put back the latency the cache exists to
+// remove. New playlists appear after a --refresh or a `playlist cache`.
+func playlistList(args []string) error {
 	flags := flag.NewFlagSet("playlist list", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	limit := flags.Int("limit", 50, "number of playlists (1-50)")
+	databasePath := flags.String("db", "", "SQLite cache path")
+	full := flags.Bool("full", false, "return Spotify's complete objects instead of the trimmed ones")
+	refresh := flags.Bool("refresh", false, "fetch from Spotify and update the cache before answering")
+	limit := flags.Int("limit", 0, "page size (0 reads the whole cache in one page)")
 	offset := flags.Int("offset", 0, "result offset (0 or greater)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if flags.NArg() != 0 || *limit < 1 || *limit > 50 || *offset < 0 {
-		return errors.New("usage: spotctl playlist list [--limit N] [--offset N], where N is 1-50 and offset is non-negative")
+	if flags.NArg() != 0 {
+		return errors.New("usage: spotctl playlist list [--db PATH] [--full] [--refresh] [--limit N] [--offset N]")
 	}
-	return outputRequest(client, http.MethodGet, "/me/playlists", url.Values{
-		"limit":  {strconv.Itoa(*limit)},
-		"offset": {strconv.Itoa(*offset)},
-	}, nil)
+	if *limit < 0 || *offset < 0 {
+		return errors.New("playlist list limit and offset must be 0 or greater")
+	}
+
+	path, err := resolvePlaylistCachePath(*databasePath)
+	if err != nil {
+		return err
+	}
+
+	if !*refresh {
+		envelope, _, err := queryCachedPlaylists(path, *full, *limit, *offset)
+		switch {
+		case err == nil:
+			return writeJSON(envelope)
+		case errors.Is(err, errCacheEmpty):
+			// never populated: fall through and fetch, so the command always
+			// works rather than telling the caller to go run something else
+		default:
+			return err
+		}
+	}
+
+	client, err := newSpotifyClient()
+	if err != nil {
+		return err
+	}
+	playlists, collection, err := fetchPlaylistSummaries(client)
+	if err != nil {
+		return err
+	}
+	if err := upsertPlaylistSummaries(path, playlists, collection, time.Now().UTC()); err != nil {
+		return err
+	}
+	envelope, _, err := queryCachedPlaylists(path, *full, *limit, *offset)
+	if err != nil {
+		return err
+	}
+	envelope.Source = "api"
+	return writeJSON(envelope)
 }
 
-func playlistGetItems(client *spotifyClient, args []string) error {
+// playlistGet returns the playlist object itself, not a paging envelope, which
+// is the shape Spotify uses for this endpoint.
+func playlistGet(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: spotctl playlist items PLAYLIST [--limit N] [--offset N]")
+		return errors.New("usage: spotctl playlist get PLAYLIST [--db PATH] [--full] [--refresh]")
+	}
+	playlistID := spotifyID(args[0], "playlist")
+	flags := flag.NewFlagSet("playlist get", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	databasePath := flags.String("db", "", "SQLite cache path")
+	full := flags.Bool("full", false, "return Spotify's complete object instead of the trimmed one")
+	refresh := flags.Bool("refresh", false, "fetch from Spotify before answering")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return errors.New("usage: spotctl playlist get PLAYLIST [--db PATH] [--full] [--refresh]")
+	}
+
+	path, err := resolvePlaylistCachePath(*databasePath)
+	if err != nil {
+		return err
+	}
+	if !*refresh {
+		playlist, _, err := queryCachedPlaylist(path, playlistID, *full)
+		switch {
+		case err == nil:
+			return writeJSON(playlist)
+		case errors.Is(err, errCacheEmpty):
+		default:
+			return err
+		}
+	}
+
+	client, err := newSpotifyClient()
+	if err != nil {
+		return err
+	}
+	data, err := client.request(http.MethodGet, "/playlists/"+playlistID, nil, nil)
+	if err != nil {
+		return err
+	}
+	if *full {
+		return writeJSON(data)
+	}
+	var object spotifyPlaylistObject
+	if err := json.Unmarshal(data, &object); err != nil {
+		return fmt.Errorf("decode playlist: %w", err)
+	}
+	return writeJSON(trimPlaylist(object, true))
+}
+
+func playlistGetItems(args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: spotctl playlist items PLAYLIST [--db PATH] [--full] [--refresh] [--limit N] [--offset N]")
 	}
 	playlistID := spotifyID(args[0], "playlist")
 	flags := flag.NewFlagSet("playlist items", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	limit := flags.Int("limit", 100, "number of items (1-100)")
+	databasePath := flags.String("db", "", "SQLite cache path")
+	full := flags.Bool("full", false, "return Spotify's complete items instead of the trimmed ones")
+	refresh := flags.Bool("refresh", false, "fetch from Spotify and update the cache before answering")
+	limit := flags.Int("limit", 0, "page size (0 reads the whole playlist in one page)")
 	offset := flags.Int("offset", 0, "result offset (0 or greater)")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
-	if flags.NArg() != 0 || *limit < 1 || *limit > 100 || *offset < 0 {
-		return errors.New("usage: spotctl playlist items PLAYLIST [--limit N] [--offset N], where N is 1-100 and offset is non-negative")
+	if flags.NArg() != 0 {
+		return errors.New("usage: spotctl playlist items PLAYLIST [--db PATH] [--full] [--refresh] [--limit N] [--offset N]")
 	}
-	return outputRequest(client, http.MethodGet, "/playlists/"+playlistID+"/items", url.Values{
-		"limit":  {strconv.Itoa(*limit)},
-		"offset": {strconv.Itoa(*offset)},
-	}, nil)
+	if *limit < 0 || *offset < 0 {
+		return errors.New("playlist items limit and offset must be 0 or greater")
+	}
+
+	path, err := resolvePlaylistCachePath(*databasePath)
+	if err != nil {
+		return err
+	}
+	if !*refresh {
+		envelope, err := queryCachedPlaylistItems(path, playlistID, *full, *limit, *offset)
+		switch {
+		case err == nil:
+			return writeJSON(envelope)
+		case errors.Is(err, errCacheEmpty):
+		default:
+			return err
+		}
+	}
+
+	client, err := newSpotifyClient()
+	if err != nil {
+		return err
+	}
+	tracks, err := fetchAllPlaylistTracks(client, playlistID)
+	if err != nil {
+		return err
+	}
+	if err := replacePlaylistTracks(path, playlistID, tracks); err != nil {
+		return err
+	}
+	envelope, err := queryCachedPlaylistItems(path, playlistID, *full, *limit, *offset)
+	if err != nil {
+		return err
+	}
+	envelope.Source = "api"
+	return writeJSON(envelope)
 }
 
 func playlistCreate(client *spotifyClient, args []string) error {
