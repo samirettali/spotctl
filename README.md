@@ -2,6 +2,14 @@
 
 An agent-friendly Spotify CLI with machine-readable JSON output.
 
+Responses keep Spotify's own envelope — `items`, `limit`, `offset`, `total`, `next`,
+`previous`, `href` — so anything written against the Web API keeps working. Only the objects
+inside change: trimmed to what an agent needs by default, and exactly as Spotify sent them
+with `--full`. The trimmed form is roughly a tenth of the tokens.
+
+`playlist list`, `playlist get` and `playlist items` answer from a local SQLite cache without
+contacting Spotify, so they are instant; `--refresh` fetches and updates it.
+
 ## Requirements
 
 - Go 1.24+
@@ -74,9 +82,11 @@ Manage playlists:
 
 ```sh
 spotctl playlist list
+spotctl playlist list --full
+spotctl playlist list --refresh
 spotctl playlist list --limit 50 --offset 50
 spotctl playlist get PLAYLIST_ID
-spotctl playlist items PLAYLIST_ID --limit 100 --offset 0
+spotctl playlist items PLAYLIST_ID
 spotctl playlist create --name "Late night" --description "Created by my agent"
 spotctl playlist update PLAYLIST_ID --name "Later night" --public=true
 spotctl playlist add PLAYLIST_ID TRACK_ID spotify:track:TRACK_ID

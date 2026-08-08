@@ -11,6 +11,35 @@
 ## Conventions
 
 - Keep stdout machine-readable JSON; diagnostics belong on stderr.
+- **The envelope is always Spotify's; only the objects inside `items` change.** Default gives
+  trimmed objects (an id, a name, and whatever disambiguates two entries with the same name),
+  `--full` gives them verbatim — the raw payloads cost roughly ten times the tokens (50
+  playlists are 84 KB raw against 8 KB trimmed, most of it `images` and `owner`). Keeping the
+  wrapper identical means anything written against the Spotify API keeps working, so the
+  paging keys stay `items`/`limit`/`offset`/`total`/`next`/`previous`/`href`, search stays
+  nested per type (`{"tracks": {...}}`), `playlist get` returns the object itself rather than a
+  wrapper, and `device list`/`queue get` keep their non-paging shapes. `source` and `cached_at`
+  are added on cache reads; a Spotify client ignores keys it does not know.
+- **Paging fields on network reads are copied off Spotify's own response, never rebuilt**, so
+  they cannot drift. Cache reads rebuild them from the collection URL captured during the last
+  refresh — Spotify rewrites `/me/playlists` to `/users/{id}/playlists` in `href`, so it is
+  stored rather than guessed. `next`/`previous` are then honest: present only when there really
+  is another page. Reading from cache defaults to one page holding everything, since there is
+  no API cap to respect on disk and the common caller wants the whole library at once.
+- **`playlist list|get|items` answer from the SQLite cache and never check freshness over the
+  network**, because they sit behind an interactive picker where a stray HTTP round trip is the
+  whole problem. `--refresh` fetches and updates; an uninitialized cache falls back to the API
+  on its own so the command always works. `--refresh` is rejected on commands with no cache
+  rather than ignored.
+- **The cache stores each playlist and track payload verbatim in a `payload` column**, which is
+  what lets `--full` be served from disk without the schema growing a column every time Spotify
+  adds a field. `playlist items --full` rebuilds the item shape from `tracks.payload` plus the
+  `added_at` on the join row, so a track in ten playlists is stored once.
+- **`playlist list --refresh` is a playlists-only refresh and must upsert, never replace.**
+  `playlist_tracks` cascades on delete, so replacing playlist rows would silently empty the
+  track cache. It also keeps its own freshness marker (`playlist_list_metadata`) apart from
+  the track cache's (`playlist_cache_metadata`), so a light refresh cannot make
+  `stats|search|artists|sample` believe they are current.
 - Use only the Go standard library unless a dependency provides clear value.
 - Target Spotify's post-February-2026 Web API paths (`/playlists/{id}/items`, not `/tracks`).
 - OAuth uses Authorization Code with PKCE; never require or store a client secret.

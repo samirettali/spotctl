@@ -8,6 +8,45 @@ compatibility: Requires spotctl. Spotify API operations require OAuth authentica
 
 Use `spotctl` for Spotify searches, listening statistics, queue operations, and playlist management. Its stdout is JSON; errors are JSON on stderr.
 
+## Output shapes
+
+**The envelope is Spotify's own.** Responses keep the shape the Web API documents — `items`, `limit`, `offset`, `total`, `next`, `previous`, `href`, search nested per type, `playlist get` returning the playlist object itself. Only the objects inside change:
+
+- **default** — trimmed objects: an id, a name, and whatever disambiguates two entries with the same name.
+- **`--full`** — the objects exactly as Spotify sends them.
+
+Prefer the default. The full payloads are roughly ten times the tokens and the trimmed objects already carry what is needed to act; reach for `--full` only when the user asks for something the trimmed object omits, such as album art, follower counts, ISRCs, or `added_by`.
+
+Trimmed objects:
+
+```
+track     {id, name, artists[], album}
+artist    {id, name, genres[]}
+album     {id, name, artists[]}
+playlist  {id, name, tracks, owner, public}   (+ description on playlist get)
+device    {id, name, type, is_active, volume_percent}
+```
+
+Cache reads add `source` ("cache" or "api") and `cached_at`. Empty collections are `[]`, never `null`.
+
+## Reading playlists
+
+`playlist list`, `playlist get`, and `playlist items` answer from the local SQLite cache and do not contact Spotify, so they are instant. They never check whether the cache is stale, because a freshness check over the network would defeat the point.
+
+```sh
+spotctl playlist list                      # from cache, every playlist in one page
+spotctl playlist list --refresh            # fetch, update the cache, then answer
+spotctl playlist list --limit 50 --offset 50
+spotctl playlist items PLAYLIST_ID
+spotctl playlist items PLAYLIST_ID --refresh
+```
+
+Reading from cache returns everything in a single page by default, so `next` is `null`; pass `--limit` to page, and `next`/`previous` are then real URLs you can follow.
+
+`source` in the response says whether the answer came from `cache` or the `api`, and `cached_at` says when it was written. If the user just changed a playlist elsewhere, or the response looks out of date against what they describe, re-run with `--refresh` rather than telling them the data is stale. A cache that has never been populated falls back to the API automatically, so these commands always work.
+
+`--refresh` on `playlist list` only re-reads playlist names; it does not re-read every track. Use `spotctl playlist cache` for that.
+
 ## Before using it
 
 Skip the authentication check when only running `spotctl playlist contains`; it queries the local SQLite cache without network access. For all Spotify API operations, check that authentication is configured:
@@ -35,6 +74,8 @@ spotctl search --type artist --limit 5 "artist"
 spotctl search --type playlist --limit 50 --offset 50 "playlist"
 ```
 
+Search always contacts Spotify; `--refresh` is rejected there rather than ignored.
+
 Search limit is 1-50 (default 20) and offset is 0-1000 — Spotify's own caps; values outside these ranges are rejected before any request is made.
 
 Use IDs or URIs from the JSON response. Match both title and artist; do not blindly select the first result when several plausible matches exist. Ask the user to choose if intent remains ambiguous.
@@ -50,8 +91,6 @@ Defaults in parentheses; hard caps are Spotify's. Out-of-range values fail local
 | `search` | `--limit` 1-50 (20), `--offset` 0-1000 |
 | `top tracks\|artists` | `--limit` 1-50 (20), `--offset` >= 0 |
 | `history recent` | `--limit` 1-50 (20); Spotify retains only the last ~50 plays |
-| `playlist list` | `--limit` 1-50 (50) |
-| `playlist items` | `--limit` 1-100 (100) |
 | `playlist add\|remove` | at most 100 items per request |
 | `playlist search` | `--limit` 1-100 (25) |
 | `playlist sample` | `--limit` 1-100 (10) |
@@ -122,7 +161,7 @@ Adding requires Spotify Premium and an active playback device. Spotify's API can
 
 ## Playlists
 
-List the user's playlists or inspect one:
+List the user's playlists or inspect one. Both read the cache; see "Reading playlists" above:
 
 ```sh
 spotctl playlist list
@@ -192,7 +231,8 @@ spotctl playlist sample --playlist "hard techno" --limit 5
 - Run only the mutations the user requested; do not add related tracks automatically.
 - Preserve the order given by the user when adding multiple items.
 - Report what changed using names and artists, not only opaque IDs.
-- Do not query the cache's SQLite database directly; use the playlist cache commands.
+- Do not query the cache's SQLite database directly; use the playlist commands.
+- Do not pass `--full` by default. It is for when the trimmed shape genuinely lacks a field the user asked for.
 - If a command fails with `403`, explain that Spotify application access, scopes, ownership, or Premium requirements may be responsible.
 - If a command fails with `404`, re-check the item type and ID before retrying.
 - Never expose access or refresh tokens in responses or command output.
