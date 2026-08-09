@@ -55,6 +55,10 @@ func run(args []string) error {
 		return runQueue(args[1:])
 	case "play":
 		return runPlay(args[1:])
+	case "next":
+		return runSkip("next", "/me/player/next", args[1:])
+	case "previous":
+		return runSkip("previous", "/me/player/previous", args[1:])
 	case "playlist":
 		return runPlaylist(args[1:])
 	case "version", "--version", "-v":
@@ -82,6 +86,8 @@ Usage:
   spotctl queue get [--full]
   spotctl queue add [--device ID] ITEM...
   spotctl play TYPE [--device ID] ITEM
+  spotctl next [--device ID] [--count N]
+  spotctl previous [--device ID] [--count N]
   spotctl playlist list [--db PATH] [--full] [--refresh]
   spotctl playlist get PLAYLIST [--db PATH] [--full] [--refresh]
   spotctl playlist items PLAYLIST [--db PATH] [--full] [--refresh]

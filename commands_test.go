@@ -538,6 +538,33 @@ func TestRequestWithRetryStopsOnNon429(t *testing.T) {
 	}
 }
 
+func TestSkipTracksStopsAtTheFirstFailure(t *testing.T) {
+	original := retrySleep
+	retrySleep = func(time.Duration) {}
+	t.Cleanup(func() { retrySleep = original })
+
+	calls := 0
+	client := testClient(func(*http.Request) (*http.Response, error) {
+		calls++
+		if calls == 3 {
+			return stubResponse(http.StatusNotFound, `{"error":{"status":404,"message":"no device"}}`, nil), nil
+		}
+		return stubResponse(http.StatusNoContent, "", nil), nil
+	})
+
+	result := skipTracks(client, "/me/player/next", 5, "")
+	if result.Skipped != 2 {
+		t.Fatalf("skipped = %d, want 2", result.Skipped)
+	}
+	if len(result.Failed) != 1 {
+		t.Fatalf("failed = %+v, want one entry", result.Failed)
+	}
+	// stopping matters: the remaining steps would skip the wrong tracks
+	if calls != 3 {
+		t.Fatalf("attempts = %d, want 3 (stop at the failure)", calls)
+	}
+}
+
 func TestQueueAddAcceptsSpotifysNonJSONSuccess(t *testing.T) {
 	// The real response: 200, no Content-Type, a 27-byte opaque token.
 	client := testClient(func(*http.Request) (*http.Response, error) {

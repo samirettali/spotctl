@@ -393,6 +393,56 @@ func queueAddItems(client *spotifyClient, uris []string, device string) queueAdd
 	return result
 }
 
+// runSkip backs both `next` and `previous`. Advancing is the only mutation
+// Spotify allows on the queue besides appending: there is no remove, clear,
+// replace or reorder, so `next --count N` is the closest thing to dropping the
+// next N queued items.
+func runSkip(name, path string, args []string) error {
+	flags := flag.NewFlagSet(name, flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	device := flags.String("device", "", "Spotify Connect device ID")
+	count := flags.Int("count", 1, "how many tracks to move")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("usage: spotctl %s [--device ID] [--count N]", name)
+	}
+	if *count < 1 {
+		return errors.New("count must be 1 or greater")
+	}
+
+	client, err := newSpotifyClient()
+	if err != nil {
+		return err
+	}
+	return writeJSON(skipTracks(client, path, *count, *device))
+}
+
+type skipResult struct {
+	Skipped int               `json:"skipped"`
+	Failed  []queueAddFailure `json:"failed"`
+}
+
+// skipTracks steps one track at a time, like queueAddItems: Spotify moves by a
+// single track per request, and a failure part way through is reported rather
+// than hidden behind an all-or-nothing error.
+func skipTracks(client *spotifyClient, path string, count int, device string) skipResult {
+	result := skipResult{Failed: []queueAddFailure{}}
+	query := url.Values{}
+	if device != "" {
+		query.Set("device_id", device)
+	}
+	for i := 0; i < count; i++ {
+		if _, err := requestWithRetry(client, http.MethodPost, path, query, nil); err != nil {
+			result.Failed = append(result.Failed, queueAddFailure{URI: path, Error: err.Error()})
+			break
+		}
+		result.Skipped++
+	}
+	return result
+}
+
 func runPlaylist(args []string) error {
 	if len(args) == 0 {
 		return errors.New("usage: spotctl playlist list|get|items|create|update|add|remove|delete|cache|contains|artists|stats|search|sample")
