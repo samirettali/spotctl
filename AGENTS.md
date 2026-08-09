@@ -72,7 +72,18 @@ the updater in `samirettali/nur` scoped to this package.
   the API all collapse into the same shape. `authError` wraps its cause, so `errors.As` still
   reaches the `APIError` underneath a 401 and the 429 retry logic is unaffected.
 - Spotify does not expose Extended Streaming History through its Web API; users must request and download that archive manually through Spotify's account privacy page.
-- Queue mutation is append-only because Spotify does not expose remove, reorder, or clear operations.
+- Queue mutation is append-only because Spotify does not expose remove, reorder, or clear
+  operations. **Advancing is the exception**: `POST /me/player/next` and `/previous` exist and
+  need `user-modify-playback-state`, which is already requested. `next --count N` is therefore
+  the nearest thing to dropping the next N queued items — measured: two skips consumed both
+  queued copies of a track and `previous` did not bring them back.
+- **`previous` walks the play history, not the queue in reverse.** Measured on a live session:
+  it returned to a track played earlier and restored the playlist it had been played from, so
+  it is not an undo for `next`. Nor does it behave like the UI button, which restarts the
+  current track a few seconds in. Landing in a one-track playlist also makes `queue get` answer
+  with the same track repeated, which is the context being that short, not a bug.
+- `skipTracks` stops at the first failure instead of continuing, because every later step would
+  then move past the wrong track.
 - **A 2xx body that is not JSON is a success, not a failure.** `POST /me/player/queue` answers
   200 with a 27-byte opaque token and no `Content-Type`, so rejecting non-JSON in `request`
   reported every track as failed while the queue actually filled up — `{"queued": 0, "failed":

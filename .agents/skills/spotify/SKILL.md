@@ -109,6 +109,7 @@ Defaults in parentheses, hard caps are Spotify's. Out-of-range values fail local
 | `playlist add\|remove` | at most 100 items per request |
 | `playlist search` | `--limit` 1-100 (25) |
 | `playlist sample` | `--limit` 1-100 (10) |
+| `next\|previous` | `--count` >= 1 (1) |
 
 ## Listening statistics
 
@@ -162,6 +163,16 @@ spotctl queue add --device DEVICE_ID spotify:track:ONE spotify:track:TWO spotify
 Items are appended in the order given. Spotify queues one item per request, so spotctl sends them sequentially: a malformed URI fails the whole command before anything is queued, while a runtime failure on one item does not abort the rest. The response is `{"queued": N, "failed": [...]}`, where `failed` holds only items still failing after automatic retries (each with the item `uri` and the `error`) and is empty on full success. Report failed items whenever the array is non-empty. Rate limits (429) retry with exponential backoff, so no manual pacing is needed.
 
 Adding requires Spotify Premium and an active playback device. Spotify cannot remove, clear, replace or reorder queue entries. State that limitation rather than attempting a workaround, unless the user asks for one.
+
+Moving through the queue is the one exception:
+
+```sh
+spotctl next
+spotctl next --count 3
+spotctl previous
+```
+
+Both answer `{"skipped": N, "failed": [...]}` and stop at the first failure, since every later step would move past the wrong track. `next --count N` is the closest thing to dropping the next N queued items — **they are consumed, not removed, and do not come back**, so confirm before using it to clear a queue the user built. `previous` walks the play history rather than the queue in reverse, restoring the context the earlier track came from; it is not an undo for `next`.
 
 ## Playlists
 

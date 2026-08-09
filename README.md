@@ -87,6 +87,16 @@ spotctl play track --device DEVICE_ID spotify:track:0F7FA14euOIX8KcbEturGH
 spotctl play playlist PLAYLIST_ID
 ```
 
+Move through the queue:
+
+```sh
+spotctl next
+spotctl next --count 3
+spotctl previous
+```
+
+Advancing is the only mutation Spotify allows on the queue besides appending, so `next --count N` is the closest thing to dropping the next N queued items — they are consumed, not removed, and do not come back. `previous` walks the play history rather than the queue in reverse, and restores the context the earlier track was played from.
+
 Inspect or append to the playback queue:
 
 ```sh
