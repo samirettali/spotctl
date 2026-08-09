@@ -11,8 +11,15 @@ const version = "0.11.0"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
+		var authErr *authError
 		var apiErr *APIError
-		if errors.As(err, &apiErr) {
+		if errors.As(err, &authErr) {
+			payload := map[string]any{"error": authErr.Message, "fix": authErr.Fix}
+			if authErr.Cause != nil {
+				payload["details"] = authErr.Cause.Error()
+			}
+			_ = json.NewEncoder(os.Stderr).Encode(payload)
+		} else if errors.As(err, &apiErr) {
 			_ = json.NewEncoder(os.Stderr).Encode(map[string]any{
 				"error":   apiErr.Message,
 				"status":  apiErr.Status,

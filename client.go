@@ -27,6 +27,32 @@ func (err *APIError) Error() string {
 	return fmt.Sprintf("Spotify API returned %d: %s", err.Status, err.Message)
 }
 
+// authLoginFix is the one command that resolves every authentication failure,
+// carried on the error itself so a caller never has to run `auth status` up
+// front to discover it.
+const authLoginFix = "spotctl auth login --client-id YOUR_SPOTIFY_CLIENT_ID"
+
+// authError marks a failure the user can only fix by authenticating again. It
+// wraps its cause, so errors.As still finds an APIError underneath a 401.
+type authError struct {
+	Message string
+	Fix     string
+	Cause   error
+}
+
+func (err *authError) Error() string {
+	if err.Cause == nil {
+		return fmt.Sprintf("%s: %s", err.Message, err.Fix)
+	}
+	return fmt.Sprintf("%s: %s (%v)", err.Message, err.Fix, err.Cause)
+}
+
+func (err *authError) Unwrap() error { return err.Cause }
+
+func notAuthenticated(message string, cause error) error {
+	return &authError{Message: message, Fix: authLoginFix, Cause: cause}
+}
+
 type spotifyClient struct {
 	httpClient *http.Client
 	creds      credentials
@@ -35,7 +61,7 @@ type spotifyClient struct {
 func newSpotifyClient() (*spotifyClient, error) {
 	creds, err := loadCredentials()
 	if err != nil {
-		return nil, fmt.Errorf("load credentials (run 'spotctl auth login' first): %w", err)
+		return nil, notAuthenticated("not authenticated", err)
 	}
 	client := &spotifyClient{
 		httpClient: &http.Client{Timeout: 30 * time.Second},
@@ -51,7 +77,7 @@ func newSpotifyClient() (*spotifyClient, error) {
 
 func (client *spotifyClient) refresh() error {
 	if client.creds.RefreshToken == "" {
-		return fmt.Errorf("refresh token is missing; run 'spotctl auth login' again")
+		return notAuthenticated("stored credentials have no refresh token", nil)
 	}
 	token, err := exchangeToken(url.Values{
 		"client_id":     {client.creds.ClientID},
@@ -59,7 +85,9 @@ func (client *spotifyClient) refresh() error {
 		"refresh_token": {client.creds.RefreshToken},
 	})
 	if err != nil {
-		return fmt.Errorf("refresh access token: %w", err)
+		// A refresh only fails for good when the grant is gone: revoked in the
+		// Spotify account, or the application was deleted.
+		return notAuthenticated("stored credentials are no longer valid", err)
 	}
 	client.creds.AccessToken = token.AccessToken
 	client.creds.TokenType = token.TokenType
@@ -108,6 +136,9 @@ func (client *spotifyClient) request(method, path string, query url.Values, body
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		err := decodeAPIError(response.StatusCode, data)
+		if response.StatusCode == http.StatusUnauthorized {
+			return nil, notAuthenticated("Spotify rejected the access token", err)
+		}
 		if response.StatusCode == http.StatusTooManyRequests {
 			if seconds, convErr := strconv.Atoi(strings.TrimSpace(response.Header.Get("Retry-After"))); convErr == nil && seconds >= 0 {
 				var apiErr *APIError

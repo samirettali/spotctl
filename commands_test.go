@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -534,6 +535,25 @@ func TestRequestWithRetryStopsOnNon429(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("attempts = %d, want 1 (no retry on 404)", calls)
+	}
+}
+
+func TestUnauthorizedCarriesTheFix(t *testing.T) {
+	client := testClient(func(*http.Request) (*http.Response, error) {
+		return stubResponse(http.StatusUnauthorized, `{"error":{"status":401,"message":"Invalid access token"}}`, nil), nil
+	})
+	_, err := requestWithRetry(client, http.MethodGet, "/me/top/tracks", nil, nil)
+	var authErr *authError
+	if !errors.As(err, &authErr) {
+		t.Fatalf("401 did not produce an authError: %v", err)
+	}
+	if authErr.Fix != authLoginFix {
+		t.Fatalf("fix = %q, want %q", authErr.Fix, authLoginFix)
+	}
+	// the API error has to stay reachable underneath, or the 429 retry check breaks
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusUnauthorized {
+		t.Fatalf("APIError not reachable under authError: %v", err)
 	}
 }
 
