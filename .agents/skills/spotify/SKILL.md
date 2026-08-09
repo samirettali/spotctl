@@ -6,16 +6,17 @@ compatibility: Requires spotctl. Spotify API operations require OAuth authentica
 
 # Spotify
 
-Use `spotctl` for Spotify searches, listening statistics, queue operations, and playlist management. Its stdout is JSON; errors are JSON on stderr.
+`spotctl` handles Spotify search, listening statistics, queue and playlists.
+stdout is JSON; errors are JSON on stderr.
 
 ## Output shapes
 
-**The envelope is Spotify's own.** Responses keep the shape the Web API documents — `items`, `limit`, `offset`, `total`, `next`, `previous`, `href`, search nested per type, `playlist get` returning the playlist object itself. Only the objects inside change:
+**The envelope is Spotify's own** — `items`, `limit`, `offset`, `total`, `next`, `previous`, `href`, search nested per type, `playlist get` returning the playlist object itself. Only the objects inside change:
 
-- **default** — trimmed objects: an id, a name, and whatever disambiguates two entries with the same name.
+- **default** — trimmed: an id, a name, and whatever disambiguates two entries with the same name.
 - **`--full`** — the objects exactly as Spotify sends them.
 
-Prefer the default. The full payloads are roughly ten times the tokens and the trimmed objects already carry what is needed to act; reach for `--full` only when the user asks for something the trimmed object omits, such as album art, follower counts, ISRCs, or `added_by`.
+Prefer the default. Full payloads cost roughly ten times the tokens and the trimmed objects already carry what is needed to act. Reach for `--full` only for something the trimmed object omits: album art, follower counts, ISRCs, `added_by`.
 
 Trimmed objects:
 
@@ -31,7 +32,7 @@ Cache reads add `source` ("cache" or "api") and `cached_at`. Empty collections a
 
 ## Reading playlists
 
-`playlist list`, `playlist get`, and `playlist items` answer from the local SQLite cache and do not contact Spotify, so they are instant. They never check whether the cache is stale, because a freshness check over the network would defeat the point.
+`playlist list`, `playlist get` and `playlist items` answer from the local SQLite cache without contacting Spotify, so they are instant. They never check staleness: a freshness check over the network would defeat the point.
 
 ```sh
 spotctl playlist list                      # from cache, every playlist in one page
@@ -41,29 +42,29 @@ spotctl playlist items PLAYLIST_ID
 spotctl playlist items PLAYLIST_ID --refresh
 ```
 
-Reading from cache returns everything in a single page by default, so `next` is `null`; pass `--limit` to page, and `next`/`previous` are then real URLs you can follow.
+Cache reads return everything in one page, so `next` is `null`; `--limit` pages, and then `next`/`previous` are real URLs to follow.
 
-`source` in the response says whether the answer came from `cache` or the `api`, and `cached_at` says when it was written. If the user just changed a playlist elsewhere, or the response looks out of date against what they describe, re-run with `--refresh` rather than telling them the data is stale. A cache that has never been populated falls back to the API automatically, so these commands always work.
+`source` says whether the answer came from `cache` or the `api`, `cached_at` when it was written. If the user just changed a playlist elsewhere, or the response contradicts what they describe, re-run with `--refresh` instead of telling them the data is stale. An empty cache falls back to the API on its own, so these always work.
 
-`--refresh` on `playlist list` only re-reads playlist names; it does not re-read every track. Use `spotctl playlist cache` for that.
+`--refresh` on `playlist list` re-reads playlist names only, not their tracks. Use `spotctl playlist cache` for that.
 
 ## Authentication
 
-**Do not check authentication before running a command.** Every command that needs it fails with the fix already in the error, so the check only ever costs a round trip:
+**Never check authentication before running a command.** Anything that needs it fails with the fix already in the error, so the check only ever costs a round trip:
 
 ```json
 {"error": "not authenticated", "fix": "spotctl auth login --client-id YOUR_SPOTIFY_CLIENT_ID", "details": "..."}
 ```
 
-When a command answers with a `fix`, relay that command to the user and ask them to run it — they have to complete an OAuth flow in the browser, so it cannot be run for them. The same shape covers a revoked or expired grant.
+On a `fix`, relay that command and ask the user to run it — it completes an OAuth flow in the browser and cannot be run for them. Same shape for a revoked or expired grant.
 
-`spotctl auth status` exists for when the user asks about their authentication state, not as a precondition. Its `scopes` array is worth reading when a `403` looks like a missing permission: top items need `user-top-read` and recent history needs `user-read-recently-played`, both granted by the same `auth login`.
+`spotctl auth status` is for when the user asks about their authentication state, not a precondition. Its `scopes` array is worth reading when a `403` looks like a missing permission: top items need `user-top-read`, recent history needs `user-read-recently-played`, both granted by the same `auth login`.
 
-Do not request a client secret. `spotctl` uses OAuth Authorization Code with PKCE.
+Never request a client secret. `spotctl` uses OAuth Authorization Code with PKCE.
 
 ## Resolve items safely
 
-Search before mutating when the user supplied a title rather than an exact Spotify URI, URL, or ID:
+Search before mutating whenever the user gave a title rather than an exact Spotify URI, URL or ID:
 
 ```sh
 spotctl search --type track "track and artist"
@@ -72,17 +73,15 @@ spotctl search --type artist --limit 5 "artist"
 spotctl search --type playlist --limit 50 --offset 50 "playlist"
 ```
 
-Search always contacts Spotify; `--refresh` is rejected there rather than ignored.
+Search always contacts Spotify; `--refresh` there is rejected, not ignored. Limit 1-50 (default 20), offset 0-1000 — Spotify's caps, enforced locally before any request.
 
-Search limit is 1-50 (default 20) and offset is 0-1000 — Spotify's own caps; values outside these ranges are rejected before any request is made.
+Use IDs or URIs from the JSON response. Match both title and artist; never take the first result blindly when several plausible matches exist. Ask the user to choose if intent stays ambiguous.
 
-Use IDs or URIs from the JSON response. Match both title and artist; do not blindly select the first result when several plausible matches exist. Ask the user to choose if intent remains ambiguous.
-
-Items may be passed as a Spotify URI, an `open.spotify.com` URL, or a bare track ID.
+Items may be a Spotify URI, an `open.spotify.com` URL, or a bare track ID.
 
 ## Resolve many names at once
 
-When several tracks have to be turned into IDs — a list of recommendations, an album's worth of titles — use `resolve` instead of one `search` per title. It searches every query concurrently in a single command:
+Turning several titles into IDs — a list of recommendations, an album's worth of tracks — is `resolve`, not one `search` per title. It searches every query concurrently in one command:
 
 ```sh
 spotctl resolve "funk tribu phonky tribu" "the blaze territory" "montee ascension"
@@ -93,13 +92,13 @@ spotctl resolve --limit 3 "teardrop massive attack"
 {"results": [{"query": "...", "tracks": [{"id": "...", "name": "...", "artists": [], "album": "..."}]}]}
 ```
 
-Results keep the order of the arguments. A query that matched nothing has an empty `tracks` array; one whose request failed carries an `error` string and does not abort the rest of the batch. `--limit` is per query (1-50, default 1) and `--full` returns Spotify's own track objects.
+Results keep argument order. A query that matched nothing has an empty `tracks` array; one whose request failed carries an `error` and does not abort the batch. `--limit` is per query (1-50, default 1), `--full` returns Spotify's own track objects.
 
-**A returned match is not a confirmation.** Spotify's search is fuzzy and nearly always returns something: a misspelled artist, a track that does not exist, or outright nonsense still comes back with a plausible-looking result. Check that the artist and title are the ones asked for before acting on the ID, and pass `--limit 3` when a query is likely ambiguous so the right candidate can be picked in the same call. Use `search` when the user wants to browse results rather than resolve known titles.
+**A match is not a confirmation.** Spotify's search is fuzzy and nearly always returns something: a misspelled artist, a track that does not exist, outright nonsense — all come back looking plausible. Check artist and title against what was asked before acting on the ID, and pass `--limit 3` for a likely ambiguous query so the right candidate can be picked in the same call. Use `search` when the user wants to browse rather than resolve known titles.
 
 ## Parameter limits
 
-Defaults in parentheses; hard caps are Spotify's. Out-of-range values fail locally with a descriptive error, so use these instead of probing:
+Defaults in parentheses, hard caps are Spotify's. Out-of-range values fail locally with a descriptive error — use these instead of probing:
 
 | Command | Limits |
 |---|---|
@@ -113,17 +112,13 @@ Defaults in parentheses; hard caps are Spotify's. Out-of-range values fail local
 
 ## Listening statistics
 
-Inspect the user's top tracks or artists:
-
 ```sh
 spotctl top tracks --time-range short_term --limit 50
 spotctl top artists --time-range medium_term --limit 50
 spotctl top tracks --time-range long_term --limit 50 --offset 50
 ```
 
-Valid time ranges are `short_term` (approximately 4 weeks), `medium_term` (approximately 6 months), and `long_term` (several years). The limit is 1-50; use `--offset` to paginate.
-
-Inspect recently played tracks:
+Time ranges: `short_term` (~4 weeks), `medium_term` (~6 months), `long_term` (several years). Limit 1-50, `--offset` pages.
 
 ```sh
 spotctl history recent --limit 50
@@ -131,13 +126,13 @@ spotctl history recent --before UNIX_TIMESTAMP_MS
 spotctl history recent --after UNIX_TIMESTAMP_MS
 ```
 
-Recent history returns at most 50 tracks per request. Use the millisecond values in the response's `cursors` object with `--before` or `--after`; the two options cannot be combined.
+Recent history returns at most 50 tracks per request. Page with the millisecond values in the response's `cursors` object; `--before` and `--after` cannot be combined.
 
-Spotify does not expose extended or lifetime streaming history through its Web API. If the user wants complete listening statistics, direct them to request Extended Streaming History from Spotify's account privacy page and download the archive from the emailed link.
+Spotify exposes no extended or lifetime streaming history through the Web API. For complete statistics, direct the user to request Extended Streaming History from Spotify's account privacy page and download the archive from the emailed link.
 
 ## Playback
 
-Play a track, episode, album, artist, or playlist on the active Spotify device:
+Play a track, episode, album, artist or playlist on the active device:
 
 ```sh
 spotctl play track spotify:track:TRACK_ID
@@ -147,51 +142,44 @@ spotctl play artist spotify:artist:ARTIST_ID
 spotctl play playlist spotify:playlist:PLAYLIST_ID
 ```
 
-If Spotify reports that no device is active, list available devices and retry with the intended device ID:
+If Spotify reports no active device, list the devices and retry with the intended ID:
 
 ```sh
 spotctl device list
 spotctl play album --device DEVICE_ID spotify:album:ALBUM_ID
 ```
 
-When several devices are available and the user's intended device is not evident, ask them which one to use. Do not select an integrated or third-party player merely because it appears first.
+With several devices and no evident intent, ask which one. Never pick an integrated or third-party player merely because it comes first.
 
 ## Queue
 
-Inspect the current queue:
-
 ```sh
 spotctl queue get
-```
-
-Append one or more tracks or episodes, in the given order:
-
-```sh
 spotctl queue add spotify:track:TRACK_ID
 spotctl queue add --device DEVICE_ID spotify:track:ONE spotify:track:TWO spotify:track:THREE
 ```
 
-Spotify's API queues one item per request, so spotctl sends them sequentially; a malformed item URI fails the whole command before anything is queued, but a runtime failure on one item does not abort the rest. The command returns `{"queued": N, "failed": [...]}` — `failed` lists only items that could not be queued after automatic retries (each entry has the item `uri` and the `error`), and is empty on full success. Report the failed items to the user when the array is non-empty. Rate-limit (429) responses are retried automatically with exponential backoff, so no manual pacing is needed.
+Items are appended in the order given. Spotify queues one item per request, so spotctl sends them sequentially: a malformed URI fails the whole command before anything is queued, while a runtime failure on one item does not abort the rest. The response is `{"queued": N, "failed": [...]}`, where `failed` holds only items still failing after automatic retries (each with the item `uri` and the `error`) and is empty on full success. Report failed items whenever the array is non-empty. Rate limits (429) retry with exponential backoff, so no manual pacing is needed.
 
-Adding requires Spotify Premium and an active playback device. Spotify's API cannot remove, clear, replace, or reorder queue entries. State that limitation instead of attempting a workaround unless the user asks for one.
+Adding requires Spotify Premium and an active playback device. Spotify cannot remove, clear, replace or reorder queue entries. State that limitation rather than attempting a workaround, unless the user asks for one.
 
 ## Playlists
 
-List the user's playlists or inspect one. Both read the cache; see "Reading playlists" above:
+List or inspect. Both read the cache; see "Reading playlists" above:
 
 ```sh
 spotctl playlist list
 spotctl playlist get PLAYLIST_ID
 ```
 
-Create a playlist:
+Create:
 
 ```sh
 spotctl playlist create --name "NAME" --description "DESCRIPTION"
 spotctl playlist create --name "NAME" --public
 ```
 
-Update metadata. Boolean values must be explicit:
+Update metadata. Booleans must be explicit:
 
 ```sh
 spotctl playlist update PLAYLIST_ID --name "NEW NAME"
@@ -207,25 +195,25 @@ spotctl playlist add PLAYLIST_ID spotify:track:TRACK_ID spotify:track:OTHER_ID
 spotctl playlist remove PLAYLIST_ID spotify:track:TRACK_ID
 ```
 
-Delete/unfollow a playlist:
+Delete, which Spotify implements as unfollowing:
 
 ```sh
 spotctl playlist delete PLAYLIST_ID
 ```
 
-Spotify implements playlist deletion as unfollowing. Before deleting a playlist or removing items, confirm the target and summarize the destructive change unless the user's request already identifies both unambiguously.
+Before deleting a playlist or removing items, confirm the target and summarize the destructive change — unless the user's request already identifies both unambiguously.
 
 ## Playlist cache
 
-Cache all owned and followed playlists, including every track with its name and artists:
+Cache every owned and followed playlist, including each track with its name and artists:
 
 ```sh
 spotctl playlist cache --max-age 24h
 ```
 
-`--max-age` skips the network refresh when the cache is newer than the given duration; the JSON response reports `refreshed` either way. Default to `--max-age 24h`, and force a full refresh (no `--max-age`) only when the user just changed playlists or explicitly wants current contents. A cache written by an older spotctl version is refreshed automatically regardless of age.
+`--max-age` skips the network refresh when the cache is newer than that; the response reports `refreshed` either way. Default to `--max-age 24h`. Force a full refresh (no `--max-age`) only when the user just changed playlists or explicitly wants current contents. A cache written by an older spotctl is refreshed automatically whatever its age.
 
-Query the cache offline — none of these contact Spotify:
+Offline cache queries — none of these contact Spotify:
 
 ```sh
 spotctl playlist contains TRACK_ID spotify:track:OTHER_TRACK_ID
@@ -237,18 +225,18 @@ spotctl playlist sample --limit 10              # random tracks across playlists
 spotctl playlist sample --playlist "hard techno" --limit 5
 ```
 
-- `contains` checks exact track IDs, URIs, or URLs and reports every playlist holding each track, preserving input order. Tracks only, not episodes.
+- `contains` takes exact track IDs, URIs or URLs and reports every playlist holding each one, preserving input order. Tracks only, not episodes.
 - `artists` gauges how well the user knows an artist: `tracks` is how many of their songs are filed, `playlists` how widely. An empty result means the artist is absent from the library.
-- `sample` picks a playlist uniformly at random and then a track inside it, so large playlists do not dominate the draw.
-- All cache commands accept `--db PATH`; otherwise they use the platform user cache directory.
+- `sample` picks a playlist uniformly at random, then a track inside it, so large playlists do not dominate the draw.
+- All cache commands take `--db PATH`; otherwise the platform user cache directory.
 
 ## Operating rules
 
-- Run only the mutations the user requested; do not add related tracks automatically.
-- Preserve the order given by the user when adding multiple items.
-- Report what changed using names and artists, not only opaque IDs.
-- Do not query the cache's SQLite database directly; use the playlist commands.
-- Do not pass `--full` by default. It is for when the trimmed shape genuinely lacks a field the user asked for.
-- If a command fails with `403`, explain that Spotify application access, scopes, ownership, or Premium requirements may be responsible.
-- If a command fails with `404`, re-check the item type and ID before retrying.
+- Run only the mutations asked for. Never add related tracks on your own.
+- Preserve the user's order when adding multiple items.
+- Report what changed with names and artists, not only opaque IDs.
+- Never query the cache's SQLite database directly; use the playlist commands.
+- Never pass `--full` by default. It is for when the trimmed shape genuinely lacks a field the user asked for.
+- On `403`, explain that Spotify application access, scopes, ownership or Premium requirements may be responsible.
+- On `404`, re-check the item type and ID before retrying.
 - Never expose access or refresh tokens in responses or command output.
