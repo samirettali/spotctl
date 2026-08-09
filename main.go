@@ -36,6 +36,8 @@ func run(args []string) error {
 		return runAuth(args[1:])
 	case "search":
 		return runSearch(args[1:])
+	case "resolve":
+		return runResolve(args[1:])
 	case "top":
 		return runTop(args[1:])
 	case "history":
@@ -66,6 +68,7 @@ Usage:
   spotctl auth status
   spotctl auth logout
   spotctl search [--type track|album|artist|playlist] [--limit N] [--offset N] [--full] QUERY
+  spotctl resolve [--limit N] [--full] QUERY...
   spotctl top tracks|artists [--time-range short_term|medium_term|long_term] [--limit N] [--offset N] [--full]
   spotctl history recent [--limit N] [--before UNIX_MS | --after UNIX_MS] [--full]
   spotctl device list [--full]

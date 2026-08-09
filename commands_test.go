@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -460,6 +461,61 @@ func TestQueueAddItems(t *testing.T) {
 	// two retries for slow, five for nope
 	if len(slept) != 2+maxRateLimitRetries {
 		t.Fatalf("sleeps = %d, want %d", len(slept), 2+maxRateLimitRetries)
+	}
+}
+
+func TestResolveTracksKeepsQueryOrder(t *testing.T) {
+	client := testClient(func(request *http.Request) (*http.Response, error) {
+		query := request.URL.Query().Get("q")
+		if request.URL.Query().Get("limit") != "1" {
+			t.Errorf("limit = %q, want 1", request.URL.Query().Get("limit"))
+		}
+		if query == "missing" {
+			return stubResponse(http.StatusOK, `{"tracks":{"items":[]}}`, nil), nil
+		}
+		if query == "broken" {
+			return stubResponse(http.StatusNotFound, `{"error":{"status":404,"message":"nope"}}`, nil), nil
+		}
+		body := `{"tracks":{"items":[{"id":"` + query + `-id","name":"` + query +
+			`","artists":[{"id":"a1","name":"Artist"}],"album":{"name":"Album"}}]}}`
+		return stubResponse(http.StatusOK, body, nil), nil
+	})
+
+	queries := []string{"one", "two", "missing", "three", "broken", "four", "five", "six"}
+	result := resolveTracks(client, queries, 1, false)
+
+	if len(result.Results) != len(queries) {
+		t.Fatalf("results = %d, want %d", len(result.Results), len(queries))
+	}
+	for index, match := range result.Results {
+		if match.Query != queries[index] {
+			t.Fatalf("result %d is for %q, want %q", index, match.Query, queries[index])
+		}
+	}
+
+	tracks, ok := result.Results[0].Tracks.([]minimalTrack)
+	if !ok || len(tracks) != 1 || tracks[0].ID != "one-id" || tracks[0].Album != "Album" {
+		t.Fatalf("first match = %+v", result.Results[0].Tracks)
+	}
+	if empty := result.Results[2]; empty.Error != "" || len(empty.Tracks.([]minimalTrack)) != 0 {
+		t.Fatalf("a query with no match should carry an empty list and no error: %+v", empty)
+	}
+	if failed := result.Results[4]; failed.Error == "" || len(failed.Tracks.([]minimalTrack)) != 0 {
+		t.Fatalf("a failed query should carry its error and no tracks: %+v", failed)
+	}
+}
+
+func TestResolveTracksFullKeepsSpotifyPayload(t *testing.T) {
+	client := testClient(func(*http.Request) (*http.Response, error) {
+		return stubResponse(http.StatusOK, `{"tracks":{"items":[{"id":"x","popularity":42}]}}`, nil), nil
+	})
+	result := resolveTracks(client, []string{"one"}, 1, true)
+	items, ok := result.Results[0].Tracks.([]json.RawMessage)
+	if !ok || len(items) != 1 {
+		t.Fatalf("tracks = %+v", result.Results[0].Tracks)
+	}
+	if !strings.Contains(string(items[0]), `"popularity":42`) {
+		t.Fatalf("--full dropped a field Spotify sent: %s", items[0])
 	}
 }
 

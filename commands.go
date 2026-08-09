@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -49,6 +50,119 @@ func runSearch(args []string) error {
 	}, nil, *full, func(data []byte) (any, error) {
 		return trimSearch(data, *itemType)
 	})
+}
+
+// resolveConcurrency bounds the fan-out. Spotify has no batch search endpoint,
+// so one query is one request; firing every query at once only earns 429s that
+// requestWithRetry then has to sleep off.
+const resolveConcurrency = 5
+
+type resolveMatch struct {
+	Query  string `json:"query"`
+	Tracks any    `json:"tracks"`
+	Error  string `json:"error,omitempty"`
+}
+
+type resolveResult struct {
+	Results []resolveMatch `json:"results"`
+}
+
+func runResolve(args []string) error {
+	flags := flag.NewFlagSet("resolve", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	limit := flags.Int("limit", 1, "matches to return per query (1-50, Spotify's maximum)")
+	full := flags.Bool("full", false, "return Spotify's complete payload instead of the trimmed shape")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	queries := flags.Args()
+	if len(queries) == 0 {
+		return errors.New("usage: spotctl resolve [--limit N] [--full] QUERY...")
+	}
+	if *limit < 1 || *limit > 50 {
+		return errors.New("resolve limit must be between 1 and 50 (Spotify's maximum)")
+	}
+	for _, query := range queries {
+		if strings.TrimSpace(query) == "" {
+			return errors.New("resolve queries must not be empty")
+		}
+	}
+
+	client, err := newSpotifyClient()
+	if err != nil {
+		return err
+	}
+	return writeJSON(resolveTracks(client, queries, *limit, *full))
+}
+
+// resolveTracks searches every query concurrently and keeps the results in the
+// order they were given, so a caller can zip them back against its own list.
+// A query that fails carries its error instead of aborting the batch, matching
+// queue add.
+//
+// Sharing one client across goroutines is safe because newSpotifyClient has
+// already refreshed the token: nothing mutates the credentials from here on.
+func resolveTracks(client *spotifyClient, queries []string, limit int, full bool) resolveResult {
+	matches := make([]resolveMatch, len(queries))
+	slots := make(chan struct{}, resolveConcurrency)
+	var wait sync.WaitGroup
+	for index, query := range queries {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			matches[index] = resolveOne(client, query, limit, full)
+		}()
+	}
+	wait.Wait()
+	return resolveResult{Results: matches}
+}
+
+func resolveOne(client *spotifyClient, query string, limit int, full bool) resolveMatch {
+	match := resolveMatch{Query: query, Tracks: []minimalTrack{}}
+	data, err := requestWithRetry(client, http.MethodGet, "/search", url.Values{
+		"q":     {query},
+		"type":  {"track"},
+		"limit": {strconv.Itoa(limit)},
+	}, nil)
+	if err != nil {
+		match.Error = err.Error()
+		return match
+	}
+	tracks, err := resolveItems(data, full)
+	if err != nil {
+		match.Error = err.Error()
+		return match
+	}
+	match.Tracks = tracks
+	return match
+}
+
+func resolveItems(data []byte, full bool) (any, error) {
+	var body struct {
+		Tracks struct {
+			Items []json.RawMessage `json:"items"`
+		} `json:"tracks"`
+	}
+	if err := json.Unmarshal(data, &body); err != nil {
+		return nil, fmt.Errorf("decode search results: %w", err)
+	}
+	if full {
+		if body.Tracks.Items == nil {
+			return []json.RawMessage{}, nil
+		}
+		return body.Tracks.Items, nil
+	}
+	items := make([]minimalTrack, 0, len(body.Tracks.Items))
+	for _, raw := range body.Tracks.Items {
+		var track spotifyTrackObject
+		if err := json.Unmarshal(raw, &track); err != nil {
+			return nil, fmt.Errorf("decode track: %w", err)
+		}
+		items = append(items, trimTrack(track))
+	}
+	return items, nil
 }
 
 func runTop(args []string) error {
