@@ -36,6 +36,12 @@ spotctl auth logout
 
 `SPOTIFY_CLIENT_ID` can be used instead of `--client-id`. Credentials are stored with user-only permissions under the operating system's user config directory.
 
+There is no need to check `auth status` before running anything. A command that needs authentication and does not have it — never logged in, grant revoked, token rejected — fails with the command that fixes it:
+
+```json
+{"error": "not authenticated", "fix": "spotctl auth login --client-id YOUR_SPOTIFY_CLIENT_ID", "details": "..."}
+```
+
 ## Commands
 
 Search Spotify:

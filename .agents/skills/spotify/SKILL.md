@@ -47,21 +47,19 @@ Reading from cache returns everything in a single page by default, so `next` is 
 
 `--refresh` on `playlist list` only re-reads playlist names; it does not re-read every track. Use `spotctl playlist cache` for that.
 
-## Before using it
+## Authentication
 
-Skip the authentication check when only running `spotctl playlist contains`; it queries the local SQLite cache without network access. For all Spotify API operations, check that authentication is configured:
+**Do not check authentication before running a command.** Every command that needs it fails with the fix already in the error, so the check only ever costs a round trip:
 
-```sh
-spotctl auth status
+```json
+{"error": "not authenticated", "fix": "spotctl auth login --client-id YOUR_SPOTIFY_CLIENT_ID", "details": "..."}
 ```
 
-If `authenticated` is false, ask the user to run:
+When a command answers with a `fix`, relay that command to the user and ask them to run it — they have to complete an OAuth flow in the browser, so it cannot be run for them. The same shape covers a revoked or expired grant.
 
-```sh
-spotctl auth login --client-id THEIR_SPOTIFY_CLIENT_ID
-```
+`spotctl auth status` exists for when the user asks about their authentication state, not as a precondition. Its `scopes` array is worth reading when a `403` looks like a missing permission: top items need `user-top-read` and recent history needs `user-read-recently-played`, both granted by the same `auth login`.
 
-Top items require `user-top-read`; recent history requires `user-read-recently-played`. If either scope is absent from `auth status`, ask the user to authenticate again with the same command. Do not request a client secret. `spotctl` uses OAuth Authorization Code with PKCE.
+Do not request a client secret. `spotctl` uses OAuth Authorization Code with PKCE.
 
 ## Resolve items safely
 

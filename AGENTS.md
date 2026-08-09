@@ -65,6 +65,12 @@ the updater in `samirettali/nur` scoped to this package.
 - Use only the Go standard library unless a dependency provides clear value.
 - Target Spotify's post-February-2026 Web API paths (`/playlists/{id}/items`, not `/tracks`).
 - OAuth uses Authorization Code with PKCE; never require or store a client secret.
+- **Authentication failures carry their own remedy (`authError`, rendered as `{"error", "fix",
+  "details"}`), so no caller has to probe `auth status` first.** Agents were running a status
+  check before every command, which is a network round trip to learn something the next command
+  would have said anyway. Missing credentials, a missing or dead refresh token, and a 401 from
+  the API all collapse into the same shape. `authError` wraps its cause, so `errors.As` still
+  reaches the `APIError` underneath a 401 and the 429 retry logic is unaffected.
 - Spotify does not expose Extended Streaming History through its Web API; users must request and download that archive manually through Spotify's account privacy page.
 - Queue mutation is append-only because Spotify does not expose remove, reorder, or clear operations.
 - `queue add` accepts multiple items and queues them sequentially (the API takes one URI per request); all URIs are validated up front so a malformed one aborts before any request, while per-item runtime failures are collected into a `failed` array instead of aborting. 429 responses retry with exponential backoff (`requestWithRetry`, honoring `Retry-After`); `retrySleep` is an overridable package var so tests exercise the backoff without waiting.
