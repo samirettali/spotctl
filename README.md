@@ -45,6 +45,17 @@ spotctl search "teardrop massive attack"
 spotctl search --type album --limit 5 "mezzanine"
 ```
 
+Resolve several track names to IDs in one command, for instance to turn a list of recommendations into something queueable:
+
+```sh
+spotctl resolve "funk tribu phonky tribu" "the blaze territory"
+spotctl resolve --limit 3 "teardrop massive attack"
+```
+
+Each query is searched concurrently and the results keep the order of the arguments, so they can be zipped back against the original list. A query that fails carries its `error` instead of aborting the batch, and one that matches nothing carries an empty `tracks` array.
+
+Spotify's search is fuzzy and almost always returns something, so a match is not a confirmation: check that the artist and title are the ones you asked for before acting on the ID. Use `--limit` when you want to choose among candidates rather than take the top hit.
+
 Inspect your top tracks or artists over Spotify's short-term (approximately 4 weeks), medium-term (approximately 6 months), or long-term (several years) windows:
 
 ```sh

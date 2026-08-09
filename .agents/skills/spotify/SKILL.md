@@ -1,6 +1,6 @@
 ---
 name: spotify
-description: Search and play Spotify music, inspect listening history and top items, manage the playback queue, and create, edit, or query playlists with spotctl. Use when the user asks to find or play music; inspect their top tracks, top artists, or recent listening history; manage a playlist; check whether a playlist contains a track; add music to the queue; or inspect what is queued.
+description: Search and play Spotify music, resolve track names to IDs in bulk, inspect listening history and top items, manage the playback queue, and create, edit, or query playlists with spotctl. Use when the user asks to find or play music; inspect their top tracks, top artists, or recent listening history; manage a playlist; check whether a playlist contains a track; add music to the queue; or inspect what is queued.
 compatibility: Requires spotctl. Spotify API operations require OAuth authentication; queue operations also require Spotify Premium. Cached playlist membership checks work offline.
 ---
 
@@ -82,6 +82,23 @@ Use IDs or URIs from the JSON response. Match both title and artist; do not blin
 
 Items may be passed as a Spotify URI, an `open.spotify.com` URL, or a bare track ID.
 
+## Resolve many names at once
+
+When several tracks have to be turned into IDs — a list of recommendations, an album's worth of titles — use `resolve` instead of one `search` per title. It searches every query concurrently in a single command:
+
+```sh
+spotctl resolve "funk tribu phonky tribu" "the blaze territory" "montee ascension"
+spotctl resolve --limit 3 "teardrop massive attack"
+```
+
+```json
+{"results": [{"query": "...", "tracks": [{"id": "...", "name": "...", "artists": [], "album": "..."}]}]}
+```
+
+Results keep the order of the arguments. A query that matched nothing has an empty `tracks` array; one whose request failed carries an `error` string and does not abort the rest of the batch. `--limit` is per query (1-50, default 1) and `--full` returns Spotify's own track objects.
+
+**A returned match is not a confirmation.** Spotify's search is fuzzy and nearly always returns something: a misspelled artist, a track that does not exist, or outright nonsense still comes back with a plausible-looking result. Check that the artist and title are the ones asked for before acting on the ID, and pass `--limit 3` when a query is likely ambiguous so the right candidate can be picked in the same call. Use `search` when the user wants to browse results rather than resolve known titles.
+
 ## Parameter limits
 
 Defaults in parentheses; hard caps are Spotify's. Out-of-range values fail locally with a descriptive error, so use these instead of probing:
@@ -89,6 +106,7 @@ Defaults in parentheses; hard caps are Spotify's. Out-of-range values fail local
 | Command | Limits |
 |---|---|
 | `search` | `--limit` 1-50 (20), `--offset` 0-1000 |
+| `resolve` | `--limit` 1-50 (1), per query; queries are unlimited |
 | `top tracks\|artists` | `--limit` 1-50 (20), `--offset` >= 0 |
 | `history recent` | `--limit` 1-50 (20); Spotify retains only the last ~50 plays |
 | `playlist add\|remove` | at most 100 items per request |

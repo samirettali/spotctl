@@ -68,6 +68,19 @@ the updater in `samirettali/nur` scoped to this package.
 - Spotify does not expose Extended Streaming History through its Web API; users must request and download that archive manually through Spotify's account privacy page.
 - Queue mutation is append-only because Spotify does not expose remove, reorder, or clear operations.
 - `queue add` accepts multiple items and queues them sequentially (the API takes one URI per request); all URIs are validated up front so a malformed one aborts before any request, while per-item runtime failures are collected into a `failed` array instead of aborting. 429 responses retry with exponential backoff (`requestWithRetry`, honoring `Retry-After`); `retrySleep` is an overridable package var so tests exercise the backoff without waiting.
+- **`resolve` is a spotctl command, not a Spotify one, which is why it may be bulk.** Spotify's
+  `/v1/search` takes one query per request, so a variadic `search` would have to wrap Spotify's
+  own envelope in something else and break the compatibility the trimmed shapes are careful to
+  keep — `next`/`href` would no longer have a single referent. `resolve` instead answers with
+  spotctl's own `results[]` shape, echoing each query, exactly like `playlist artists`, and fans
+  out over `requestWithRetry` the way `queue add` does. It exists because resolving N
+  recommendations to N IDs was N agent turns, which dominated the wall clock of the whole
+  recommendation flow (the CLI itself costs under two seconds end to end).
+- Sharing one `spotifyClient` across `resolve`'s goroutines is only safe because
+  `newSpotifyClient` refreshes the token before any of them start; nothing mutates the
+  credentials afterwards. A retry-on-401 inside `request` would have to take a lock first.
+- `resolve` bounds concurrency at `resolveConcurrency` rather than firing every query at once,
+  since the only thing unbounded fan-out buys is 429s that the backoff then sleeps off.
 - Playlist caching uses a pure-Go SQLite driver, defaults to the OS user cache directory, and replaces the full cache atomically. Cache refresh metadata is stored separately so a successfully cached empty playlist library can be distinguished from an uninitialized cache.
 - The cache stores track names and artists (`tracks`/`track_artists` tables) to power the offline query commands (`playlist artists|stats|search|sample`). A cache written before that schema errors with "predates track metadata" on those commands (`contains` still works), and `cache --max-age` treats such a cache as stale even when fresh by time, so agents never loop between "skip refresh" and "needs refresh".
 - `playlist sample` picks a playlist uniformly at random and then a track within it, so heavily curated playlists do not dominate the sample.
