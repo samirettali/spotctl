@@ -73,6 +73,12 @@ the updater in `samirettali/nur` scoped to this package.
   reaches the `APIError` underneath a 401 and the 429 retry logic is unaffected.
 - Spotify does not expose Extended Streaming History through its Web API; users must request and download that archive manually through Spotify's account privacy page.
 - Queue mutation is append-only because Spotify does not expose remove, reorder, or clear operations.
+- **A 2xx body that is not JSON is a success, not a failure.** `POST /me/player/queue` answers
+  200 with a 27-byte opaque token and no `Content-Type`, so rejecting non-JSON in `request`
+  reported every track as failed while the queue actually filled up — `{"queued": 0, "failed":
+  [...]}` next to a `queue get` showing all of them. Not a 204 with an empty body, which was
+  always handled. Reads that come back non-JSON now fail at the caller's decode step instead,
+  which at least names what it was decoding.
 - `queue add` accepts multiple items and queues them sequentially (the API takes one URI per request); all URIs are validated up front so a malformed one aborts before any request, while per-item runtime failures are collected into a `failed` array instead of aborting. 429 responses retry with exponential backoff (`requestWithRetry`, honoring `Retry-After`); `retrySleep` is an overridable package var so tests exercise the backoff without waiting.
 - **`resolve` is a spotctl command, not a Spotify one, which is why it may be bulk.** Spotify's
   `/v1/search` takes one query per request, so a variadic `search` would have to wrap Spotify's

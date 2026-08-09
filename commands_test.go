@@ -538,6 +538,17 @@ func TestRequestWithRetryStopsOnNon429(t *testing.T) {
 	}
 }
 
+func TestQueueAddAcceptsSpotifysNonJSONSuccess(t *testing.T) {
+	// The real response: 200, no Content-Type, a 27-byte opaque token.
+	client := testClient(func(*http.Request) (*http.Response, error) {
+		return stubResponse(http.StatusOK, "SB5X_pStx8H4pXHa012Swgi7Zdg", nil), nil
+	})
+	result := queueAddItems(client, []string{"spotify:track:one", "spotify:track:two"}, "")
+	if result.Queued != 2 || len(result.Failed) != 0 {
+		t.Fatalf("queued = %d, failed = %+v; want 2 and none", result.Queued, result.Failed)
+	}
+}
+
 func TestUnauthorizedCarriesTheFix(t *testing.T) {
 	client := testClient(func(*http.Request) (*http.Response, error) {
 		return stubResponse(http.StatusUnauthorized, `{"error":{"status":401,"message":"Invalid access token"}}`, nil), nil

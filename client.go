@@ -149,11 +149,14 @@ func (client *spotifyClient) request(method, path string, query url.Values, body
 		}
 		return nil, err
 	}
-	if len(strings.TrimSpace(string(data))) == 0 {
+	// A successful write is not required to answer in JSON. POST
+	// /me/player/queue returns 200 with a 27-byte opaque token and no
+	// Content-Type at all, so demanding JSON here reported every queued track
+	// as failed while the queue filled up. Reads that somehow come back
+	// non-JSON still fail, but at the caller's own decode step, which says what
+	// it was decoding.
+	if !json.Valid(bytes.TrimSpace(data)) {
 		return json.RawMessage(`{"ok":true}`), nil
-	}
-	if !json.Valid(data) {
-		return nil, fmt.Errorf("Spotify returned invalid JSON")
 	}
 	return json.RawMessage(data), nil
 }
