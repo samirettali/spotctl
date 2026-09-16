@@ -467,6 +467,15 @@ func openPlaylistCache(path string) (*sql.DB, error) {
 	if _, err := database.Exec(`
 		PRAGMA foreign_keys = ON;
 		PRAGMA busy_timeout = 5000;
+		CREATE TABLE IF NOT EXISTS saved_tracks (
+			position INTEGER PRIMARY KEY,
+			payload TEXT NOT NULL
+		);
+		CREATE TABLE IF NOT EXISTS saved_tracks_metadata (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			cached_at TEXT NOT NULL,
+			href TEXT NOT NULL
+		);
 		CREATE TABLE IF NOT EXISTS playlists (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,

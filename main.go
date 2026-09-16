@@ -59,6 +59,8 @@ func run(args []string) error {
 		return runSkip("next", "/me/player/next", args[1:])
 	case "previous":
 		return runSkip("previous", "/me/player/previous", args[1:])
+	case "library":
+		return runLibrary(args[1:])
 	case "playlist":
 		return runPlaylist(args[1:])
 	case "version", "--version", "-v":
@@ -88,6 +90,7 @@ Usage:
   spotctl play TYPE [--device ID] ITEM
   spotctl next [--device ID] [--count N]
   spotctl previous [--device ID] [--count N]
+  spotctl library tracks [--db PATH] [--full] [--refresh] [--limit N] [--offset N]
   spotctl playlist list [--db PATH] [--full] [--refresh]
   spotctl playlist get PLAYLIST [--db PATH] [--full] [--refresh]
   spotctl playlist items PLAYLIST [--db PATH] [--full] [--refresh]
