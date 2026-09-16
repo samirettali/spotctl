@@ -62,6 +62,15 @@ the updater in `samirettali/nur` scoped to this package.
   track cache. It also keeps its own freshness marker (`playlist_list_metadata`) apart from
   the track cache's (`playlist_cache_metadata`), so a light refresh cannot make
   `stats|search|artists|sample` believe they are current.
+- **`library tracks` is the Liked Songs library (`GET /me/tracks`), a different set from the
+  tracks inside playlists.** It follows the `playlist list` rules: cache-first, `--refresh`,
+  fallback to the API when never populated, `--limit 0` for everything. It lives in the same
+  database but in its own `saved_tracks` table with its own `saved_tracks_metadata` marker,
+  and deliberately has no foreign key into `tracks`: `playlist cache` clears that table
+  wholesale, so a reference would let one refresh empty the other. The stored payload is the
+  whole `{added_at, track}` item, so `--full` costs no extra column. Item order is Spotify's,
+  most recently saved first. Measured: 1531 items are 9.2 MB raw and 280 KB trimmed, nearly all
+  of the difference being `available_markets`.
 - Use only the Go standard library unless a dependency provides clear value.
 - Target Spotify's post-February-2026 Web API paths (`/playlists/{id}/items`, not `/tracks`).
 - OAuth uses Authorization Code with PKCE; never require or store a client secret.

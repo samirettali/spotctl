@@ -61,6 +61,8 @@ func run(args []string) error {
 		return runSkip("previous", "/me/player/previous", args[1:])
 	case "playlist":
 		return runPlaylist(args[1:])
+	case "library":
+		return runLibrary(args[1:])
 	case "version", "--version", "-v":
 		return writeJSON(map[string]string{"version": version})
 	case "help", "--help", "-h":
@@ -102,14 +104,15 @@ Usage:
   spotctl playlist stats [--db PATH]
   spotctl playlist search [--db PATH] [--limit N] QUERY...
   spotctl playlist sample [--db PATH] [--limit N] [--playlist NAME]
+  spotctl library tracks [--db PATH] [--full] [--refresh] [--limit N] [--offset N]
 
 ITEM, PLAYLIST, and TRACK may be Spotify URIs, open.spotify.com URLs, or bare IDs.
 All command output is JSON.
 
 Reads return a trimmed shape by default and Spotify's complete payload with
---full. playlist list|get|items answer from the local cache without contacting
-Spotify; --refresh fetches and updates it, and an unpopulated cache falls back
-to the API on its own.
+--full. playlist list|get|items and library tracks answer from the local cache
+without contacting Spotify; --refresh fetches and updates it, and an unpopulated
+cache falls back to the API on its own.
 
 Limits (defaults in parentheses; hard caps are Spotify's):
   search              limit 1-50 (20), offset 0-1000

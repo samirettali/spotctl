@@ -511,6 +511,21 @@ func openPlaylistCache(path string) (*sql.DB, error) {
 			cached_at TEXT NOT NULL,
 			href TEXT
 		);
+		-- Liked Songs. Self-contained on purpose: no foreign key into tracks,
+		-- which 'playlist cache' clears wholesale, and its own freshness marker
+		CREATE TABLE IF NOT EXISTS saved_tracks (
+			position INTEGER PRIMARY KEY,
+			track_id TEXT NOT NULL,
+			added_at TEXT NOT NULL,
+			payload TEXT NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS saved_tracks_track_lookup
+			ON saved_tracks (track_id);
+		CREATE TABLE IF NOT EXISTS saved_tracks_metadata (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			cached_at TEXT NOT NULL,
+			href TEXT
+		);
 	`); err != nil {
 		database.Close()
 		return nil, fmt.Errorf("initialize playlist cache: %w", err)

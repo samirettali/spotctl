@@ -7,8 +7,9 @@ Responses keep Spotify's own envelope — `items`, `limit`, `offset`, `total`, `
 inside change: trimmed to what an agent needs by default, and exactly as Spotify sent them
 with `--full`. The trimmed form is roughly a tenth of the tokens.
 
-`playlist list`, `playlist get` and `playlist items` answer from a local SQLite cache without
-contacting Spotify, so they are instant; `--refresh` fetches and updates it.
+`playlist list`, `playlist get`, `playlist items` and `library tracks` answer from a local
+SQLite cache without contacting Spotify, so they are instant; `--refresh` fetches and updates
+it.
 
 ## Requirements
 
@@ -130,6 +131,17 @@ spotctl playlist contains TRACK_ID spotify:track:OTHER_TRACK_ID
 ```
 
 The result reports whether each track occurs in any cached playlist and lists every matching playlist. Input order is preserved, making bulk checks suitable for filtering recommendation candidates before queueing them.
+
+Read your Liked Songs, the library Spotify keeps apart from playlists:
+
+```sh
+spotctl library tracks
+spotctl library tracks --refresh
+spotctl library tracks --limit 50 --offset 50
+spotctl library tracks --full
+```
+
+Like the playlist reads, it answers from the SQLite cache and `--refresh` fetches the whole library, most recently saved first. The trimmed items are tracks; `--full` returns Spotify's `{added_at, track}` items verbatim, which are roughly thirty times larger, mostly `available_markets`. The library cache is refreshed only by this command, not by `playlist cache`.
 
 The default database is `$XDG_CACHE_HOME/spotctl/playlists.db` (or the platform user cache directory). Pass `--db PATH` to either command to use another database. Refreshes replace the cache atomically, and `playlist contains` does not require authentication or network access.
 
