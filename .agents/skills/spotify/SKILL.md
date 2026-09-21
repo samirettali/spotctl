@@ -48,6 +48,15 @@ Cache reads return everything in one page, so `next` is `null`; `--limit` pages,
 
 `--refresh` on `playlist list` re-reads playlist names only, not their tracks. Use `spotctl playlist cache` for that.
 
+## Reading Liked Songs
+
+`spotctl library tracks` reads saved tracks, not playlist membership. It is cache-first,
+fetches automatically only when uninitialized, and returns all tracks in one page by
+default. Use `--refresh` after changes, `--limit N --offset N` for local paging, and
+`--db PATH` to override the shared SQLite database. Default items are trimmed tracks;
+`--full` keeps Spotify's complete `{added_at, track}` items. Library and playlist
+refreshes are independent. `user-library-read` is already requested by `auth login`.
+
 ## Authentication
 
 **Never check authentication before running a command.** Anything that needs it fails with the fix already in the error, so the check only ever costs a round trip:

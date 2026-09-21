@@ -105,6 +105,24 @@ spotctl queue add spotify:track:0F7FA14euOIX8KcbEturGH
 spotctl queue add --device DEVICE_ID https://open.spotify.com/track/0F7FA14euOIX8KcbEturGH
 ```
 
+Read your Liked Songs (saved tracks):
+
+```sh
+spotctl library tracks
+spotctl library tracks --refresh
+spotctl library tracks --limit 50 --offset 50
+spotctl library tracks --full
+```
+
+Reads use the local SQLite cache without checking freshness; an uninitialized library
+fetches automatically. `--refresh` fetches every saved track before atomically replacing
+the library cache. The default returns all tracks in Spotify's order in one paging
+envelope; `--limit` and `--offset` page locally, with no API size cap. Items are trimmed
+tracks by default; `--full` preserves the complete `{added_at, track}` items.
+The library shares the playlist database (`--db PATH` overrides it), but its data and
+freshness marker are independent: refreshing playlists never refreshes Liked Songs or
+vice versa. Requires `user-library-read`, already requested by `auth login`.
+
 Manage playlists:
 
 ```sh
